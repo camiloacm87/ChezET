@@ -1,5 +1,6 @@
-# Archivos compilados (se generan con build.ps1 / build_mac.sh / GitHub Actions)
-Ejecutables/
+# Archivos temporales de compilación
 dist/
 *.syso
 *.exe~
+# La .app de Mac se sube comprimida (AjedrezEnRed-Mac.zip), no como carpeta
+Ejecutables/Mac/*.app/

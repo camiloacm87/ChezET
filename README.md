@@ -4,16 +4,16 @@ Ajedrez para dos jugadores por la red local del trabajo. Sin instalación, sin i
 
 ## Descargar
 
-👉 **[Última versión](https://github.com/camiloacm87/ChezET/releases/latest)**: `AjedrezEnRed.exe` (Windows) y `AjedrezEnRed-Mac.zip` (Mac).
+Los ejecutables están en la carpeta **[Ejecutables](Ejecutables)** de este repositorio
+y también en **[Releases](https://github.com/camiloacm87/ChezET/releases/latest)**:
 
-## Apps
+| Sistema | Archivo |
+|---|---|
+| **Windows 10/11** | [`Ejecutables/Windows/AjedrezEnRed.exe`](Ejecutables/Windows/AjedrezEnRed.exe) — app con ventana propia e icono |
+| **macOS 12+** (Intel y Apple Silicon) | [`Ejecutables/Mac/AjedrezEnRed-Mac.zip`](Ejecutables/Mac/AjedrezEnRed-Mac.zip) — contiene *Ajedrez en Red.app* |
+| Android | (próximamente) — ver [ANDROID.md](ANDROID.md) |
 
-| Sistema | Archivo | Cómo se obtiene |
-|---|---|---|
-| **Windows** | `Ejecutables/Windows/AjedrezEnRed.exe` — app con ventana propia e icono | `.\build.ps1` en Windows |
-| **macOS** | `Ejecutables/Mac/Ajedrez en Red.app` (en `AjedrezEnRed-Mac.zip`) — app con ventana propia, universal Intel + Apple Silicon | `bash build_mac.sh` **en un Mac**, o automáticamente con GitHub Actions |
-| macOS (provisional) | `Ejecutables/Mac/AjedrezEnRed-Mac-sin-ventana.zip` — funciona en el navegador | `.\build.ps1` en Windows |
-| Android | (próximamente) | ver [ANDROID.md](ANDROID.md) |
+Para descargar un archivo desde la carpeta: ábrelo y pulsa el botón de descarga (⤓) de la derecha.
 
 **Windows:** doble clic en `AjedrezEnRed.exe`. Si sale SmartScreen: *Más información → Ejecutar de todas formas*.
 Necesita Microsoft Edge WebView2, que ya viene en Windows 10/11 (si faltara, el juego se abre en el navegador).
@@ -23,7 +23,8 @@ Necesita Microsoft Edge WebView2, que ya viene en Windows 10/11 (si faltara, el 
 
 > Apple no permite crear apps de Mac con ventana desde Windows: la compilación tiene que hacerse en un Mac.
 > Si no tienes uno, sube el proyecto a GitHub: el flujo `.github/workflows/build.yml` compila la app de Mac
-> (y la de Windows) en los servidores de GitHub y deja los archivos para descargar en la pestaña *Actions*.
+> (y la de Windows) en los servidores de GitHub y deja los archivos para descargar en la pestaña *Actions*
+> (y en *Releases* al subir una etiqueta `v*`).
 
 ## Cómo jugar
 
@@ -56,6 +57,7 @@ Requiere [Go](https://go.dev/dl/) 1.22+.
 - `main.go`, `window_*.go` — app de escritorio: ventana propia (WebView2 en Windows, WebKit en Mac).
 - `server/server.go` — núcleo: servidor local, sincronización en tiempo real (SSE), descubrimiento UDP.
 - `server/web/` — interfaz y motor de reglas (`chess.js`, validado con pruebas perft).
-- `packaging/` — icono, `Info.plist` y lanzador de Mac.
-- `tools/mkrsrc` — incrusta icono y manifiesto en el `.exe`; `tools/mkzip` — zip con permisos Unix.
+- `packaging/` — icono e `Info.plist` de Mac.
+- `tools/mkrsrc` — incrusta icono y manifiesto en el `.exe`.
+- `Ejecutables/` — apps compiladas listas para descargar.
 - `build.ps1`, `build_mac.sh`, `.github/workflows/build.yml` — compilación.
