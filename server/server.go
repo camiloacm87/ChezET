@@ -83,14 +83,79 @@ type peer struct {
 	seen   time.Time
 }
 
+// remoteSeat es la partida de otro equipo a la que se unió este jugador; al
+// cerrar la app se le avisa al anfitrión.
+type remoteSeat struct {
+	Base  string `json:"base"`
+	Token string `json:"token"`
+}
+
 type Server struct {
 	mu         sync.Mutex
-	port       int
+	handler    http.Handler
+	lanWanted  int          // puerto de red configurado (8765 por defecto)
+	lan        *http.Server // servidor de red activo; nil = red cerrada
+	lanPort    int          // puerto de red abierto (0 = cerrado)
 	instanceID string
 	hostToken  string
 	game       *Game
+	endReason  string // por qué terminó la última partida (se muestra a los jugadores)
+	remote     *remoteSeat
 	subs       map[*sub]struct{}
 	peers      map[string]*peer
+	udp        *net.UDPConn // escucha de anuncios; solo mientras se buscan partidas
+	discoverAt time.Time
+}
+
+var current *Server
+
+// openLAN abre el puerto de red para que el rival pueda conectarse. Con s.mu tomado.
+func (s *Server) openLAN() error {
+	if s.lan != nil {
+		return nil
+	}
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", s.lanWanted))
+	if err != nil {
+		log.Printf("El puerto %d está ocupado, usando otro libre…", s.lanWanted)
+		if ln, err = net.Listen("tcp", ":0"); err != nil {
+			return err
+		}
+	}
+	srv := &http.Server{Handler: s.handler}
+	go func() { _ = srv.Serve(ln) }()
+	s.lan = srv
+	s.lanPort = ln.Addr().(*net.TCPAddr).Port
+	log.Printf("Red abierta en el puerto %d", s.lanPort)
+	return nil
+}
+
+// closeLAN cierra el puerto de red (tras un instante, para que el último aviso
+// llegue a los jugadores conectados). Con s.mu tomado.
+func (s *Server) closeLAN() {
+	if s.lan == nil {
+		return
+	}
+	srv := s.lan
+	s.lan, s.lanPort = nil, 0
+	go func() {
+		time.Sleep(800 * time.Millisecond)
+		_ = srv.Close()
+		log.Printf("Red cerrada")
+	}()
+}
+
+// endGame termina la partida actual, avisa a los jugadores con el motivo y
+// cierra la red. Con s.mu tomado.
+func (s *Server) endGame(reason string) {
+	if s.game == nil {
+		return
+	}
+	log.Printf("Partida terminada: %s", reason)
+	s.game = nil
+	s.hostToken = ""
+	s.endReason = reason
+	s.notify()
+	s.closeLAN()
 }
 
 func newToken() string {
@@ -167,7 +232,7 @@ type playerView struct {
 func (s *Server) viewJSON(token string) []byte {
 	g := s.game
 	if g == nil {
-		b, _ := json.Marshal(map[string]any{"gameId": ""})
+		b, _ := json.Marshal(map[string]any{"gameId": "", "ended": s.endReason})
 		return b
 	}
 	var ps [2]playerView
@@ -222,7 +287,6 @@ func (s *Server) status() string {
 // ---------- Handlers ----------
 
 func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
 	primary, ips := localIPs()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -237,7 +301,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, 200, map[string]any{
-		"port":      s.port,
+		"port":      s.lanPort, // 0 = red cerrada
 		"primary":   primary,
 		"ips":       ips,
 		"isLocal":   isLocal(r),
@@ -279,8 +343,14 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	g := &Game{ID: newToken()[:8], DrawOffer: -1}
 	g.Players[seat] = &Player{Name: cleanName(req.Name), Token: tok}
 	s.mu.Lock()
+	if err := s.openLAN(); err != nil {
+		s.mu.Unlock()
+		fail(w, 500, "no se pudo abrir la red: "+err.Error())
+		return
+	}
 	s.game = g
 	s.hostToken = tok
+	s.endReason = ""
 	s.notify()
 	s.mu.Unlock()
 	log.Printf("Partida creada por %q (juega con %s)", cleanName(req.Name), map[int]string{0: "blancas", 1: "negras"}[seat])
@@ -293,9 +363,29 @@ func (s *Server) handleCancel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	s.game = nil
-	s.hostToken = ""
-	s.notify()
+	s.endGame("El anfitrión canceló la partida")
+	s.mu.Unlock()
+	writeJSON(w, 200, map[string]any{"ok": true})
+}
+
+// handleRemote guarda (o borra, con token vacío) la partida remota a la que se
+// unió este jugador, para avisar al anfitrión si se cierra la app.
+func (s *Server) handleRemote(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || !isLocal(r) {
+		fail(w, 403, "no permitido")
+		return
+	}
+	var req remoteSeat
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, "petición inválida")
+		return
+	}
+	s.mu.Lock()
+	if req.Token == "" || req.Base == "" {
+		s.remote = nil
+	} else {
+		s.remote = &req
+	}
 	s.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"ok": true})
 }
@@ -367,6 +457,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		delete(s.subs, sb)
 		if me != nil {
 			me.Online--
+			if me.Online == 0 {
+				s.watchGuest(me)
+			}
 		}
 		s.notify()
 		s.mu.Unlock()
@@ -395,6 +488,25 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+// guestGrace es cuánto se espera a que el invitado vuelva a conectarse (p. ej.
+// al recargar la página) antes de dar la partida por abandonada.
+var guestGrace = 10 * time.Second
+
+// watchGuest termina la partida si el invitado sigue desconectado pasado el
+// margen (cerró la app sin avisar o perdió la red). Con s.mu tomado.
+func (s *Server) watchGuest(p *Player) {
+	if p.Token == s.hostToken {
+		return // el anfitrión es este mismo equipo; su cierre lo gestiona Shutdown
+	}
+	time.AfterFunc(guestGrace, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if p.Online == 0 && s.seatOf(p.Token) >= 0 {
+			s.endGame("Tu rival cerró el juego o perdió la conexión")
+		}
+	})
 }
 
 func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +543,14 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	full := g.Players[0] != nil && g.Players[1] != nil
 
 	switch req.Type {
+	case "leave":
+		if req.Token == s.hostToken {
+			s.endGame("El anfitrión cerró la partida")
+		} else {
+			s.endGame("Tu rival salió de la partida")
+		}
+		writeJSON(w, 200, map[string]any{"ok": true})
+		return
 	case "move":
 		if !full {
 			fail(w, 409, "esperando al oponente")
@@ -519,7 +639,12 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
+	if !isLocal(r) {
+		fail(w, 403, "no permitido")
+		return
+	}
 	s.mu.Lock()
+	s.listenForGames()
 	out := []peer{}
 	for k, p := range s.peers {
 		if time.Since(p.seen) > 7*time.Second {
@@ -544,34 +669,53 @@ type beacon struct {
 	Addr   string `json:"addr"` // IP principal del emisor
 }
 
-func (s *Server) discovery() {
+// listenForGames abre (si no lo está) la escucha de anuncios de partidas. Se
+// llama mientras la pantalla de inicio busca partidas; discovery la cierra
+// cuando deja de usarse. Con s.mu tomado.
+func (s *Server) listenForGames() {
+	s.discoverAt = time.Now()
+	if s.udp != nil {
+		return
+	}
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: discoveryPort})
 	if err != nil {
 		log.Printf("Aviso: no se pudo escuchar el puerto de descubrimiento %d (%v). "+
 			"Se podrá unir escribiendo la IP manualmente.", discoveryPort, err)
-		conn, err = net.ListenUDP("udp4", &net.UDPAddr{})
-		if err != nil {
-			return
-		}
-	} else {
-		go s.listenBeacons(conn)
+		s.discoverAt = time.Now().Add(30 * time.Second) // no reintentar en cada consulta
+		return
 	}
+	s.udp = conn
+	go s.listenBeacons(conn)
+}
+
+// discovery anuncia la partida en la red solo mientras se es anfitrión, y
+// cierra la escucha de anuncios cuando nadie está buscando partidas.
+func (s *Server) discovery() {
 	tick := time.NewTicker(2 * time.Second)
 	defer tick.Stop()
 	for range tick.C {
 		s.mu.Lock()
+		if s.udp != nil && time.Since(s.discoverAt) > 8*time.Second {
+			_ = s.udp.Close()
+			s.udp = nil
+		}
 		var b []byte
-		if s.game != nil {
+		if s.game != nil && s.lanPort != 0 {
 			primary, _ := localIPs()
-			b, _ = json.Marshal(beacon{appTag, s.instanceID, s.hostName(), s.port, s.status(), primary})
+			b, _ = json.Marshal(beacon{appTag, s.instanceID, s.hostName(), s.lanPort, s.status(), primary})
 		}
 		s.mu.Unlock()
 		if b == nil {
 			continue
 		}
+		conn, err := net.ListenUDP("udp4", &net.UDPAddr{}) // solo para enviar
+		if err != nil {
+			continue
+		}
 		for _, a := range broadcastAddrs() {
 			_, _ = conn.WriteToUDP(b, &net.UDPAddr{IP: a, Port: discoveryPort})
 		}
+		_ = conn.Close()
 	}
 }
 
@@ -661,35 +805,52 @@ func localIPs() (string, []string) {
 	return primary, ips
 }
 
-// Start levanta el servidor en el puerto indicado (o en uno libre si está
-// ocupado) y devuelve la URL local donde se muestra la interfaz.
-func Start(port int) (string, error) {
+// cors permite que la pantalla de inicio de otro equipo (otro origen) consulte
+// la partida y se una a ella.
+func cors(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h(w, r)
+	}
+}
+
+// Start levanta el servidor y devuelve la URL local donde se muestra la interfaz.
+//
+// Al arrancar solo se escucha dentro del propio equipo (127.0.0.1, puerto
+// aleatorio): el equipo no es accesible desde la red. El puerto de red
+// (lanPort, 8765 por defecto) se abre únicamente al crear una partida y se
+// cierra al terminarla o al cerrar la app (Shutdown).
+func Start(lanPort int) (string, error) {
 	s := &Server{
+		lanWanted:  lanPort,
 		instanceID: newToken(),
 		subs:       map[*sub]struct{}{},
 		peers:      map[string]*peer{},
 	}
 
-	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		log.Printf("El puerto %d está ocupado, usando otro libre…", port)
-		ln, err = net.Listen("tcp", ":0")
-		if err != nil {
-			return "", err
-		}
+		return "", err
 	}
-	s.port = ln.Addr().(*net.TCPAddr).Port
+	localPort := ln.Addr().(*net.TCPAddr).Port
 
 	static, _ := fs.Sub(webFS, "web")
 	files := http.FileServer(http.FS(static))
 	mux := http.NewServeMux()
-	mux.HandleFunc("/api/info", s.handleInfo)
+	mux.HandleFunc("/api/info", cors(s.handleInfo))
+	mux.HandleFunc("/api/join", cors(s.handleJoin))
+	mux.HandleFunc("/api/state", cors(s.handleState))
+	mux.HandleFunc("/api/events", cors(s.handleEvents))
+	mux.HandleFunc("/api/action", cors(s.handleAction))
 	mux.HandleFunc("/api/create", s.handleCreate)
 	mux.HandleFunc("/api/cancel", s.handleCancel)
-	mux.HandleFunc("/api/join", s.handleJoin)
-	mux.HandleFunc("/api/state", s.handleState)
-	mux.HandleFunc("/api/events", s.handleEvents)
-	mux.HandleFunc("/api/action", s.handleAction)
+	mux.HandleFunc("/api/remote", s.handleRemote)
 	mux.HandleFunc("/api/discover", s.handleDiscover)
 	mux.HandleFunc("/game", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
@@ -699,10 +860,43 @@ func Start(port int) (string, error) {
 		w.Header().Set("Cache-Control", "no-store")
 		files.ServeHTTP(w, r)
 	}))
+	s.handler = mux
+	current = s
 
 	go s.discovery()
 	go func() { log.Println(http.Serve(ln, mux)) }()
-	return fmt.Sprintf("http://localhost:%d/", s.port), nil
+	return fmt.Sprintf("http://127.0.0.1:%d/", localPort), nil
+}
+
+// Shutdown se llama al cerrar la app: si este equipo es anfitrión, avisa a los
+// jugadores de que la partida terminó y cierra la red; si está jugando en la
+// partida de otro equipo, avisa a ese anfitrión de que se va.
+func Shutdown() {
+	s := current
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	remote := s.remote
+	s.remote = nil
+	hosting := s.game != nil
+	s.endGame("El anfitrión cerró el juego")
+	if s.udp != nil {
+		_ = s.udp.Close()
+		s.udp = nil
+	}
+	s.mu.Unlock()
+
+	if remote != nil {
+		body, _ := json.Marshal(map[string]string{"token": remote.Token, "type": "leave"})
+		c := &http.Client{Timeout: 1500 * time.Millisecond}
+		if resp, err := c.Post(remote.Base+"/api/action", "application/json", strings.NewReader(string(body))); err == nil {
+			resp.Body.Close()
+		}
+	}
+	if hosting {
+		time.Sleep(500 * time.Millisecond) // deja salir el último aviso
+	}
 }
 
 // Addresses devuelve la IP principal del equipo y todas sus IPv4.

@@ -49,7 +49,7 @@
             <label><input type="radio" name="color" value="r"> 🎲 Al azar</label>
           </div>
           <div class="row"><button id="create" style="width:100%">Crear partida</button></div>
-          <div class="label" style="margin-top:14px">Tu oponente se conecta a esta dirección:</div>
+          <div class="label" style="margin-top:14px" id="ipsLabel"></div>
           <div id="ips"></div>
           <div class="msg" id="createMsg"></div>
         </section>
@@ -71,8 +71,8 @@
       <p class="help">
         <b>¿Cómo se juega?</b> Uno de los dos pulsa <i>Crear partida</i>. El otro abre la app en su equipo y elige la
         partida en la lista de <i>Partidas encontradas</i> o escribe la dirección que se muestra en el equipo del
-        anfitrión. Si Windows o macOS preguntan por el firewall, pulsa <i>Permitir</i>. Mantén abierta la ventana
-        negra del programa mientras juegas.
+        anfitrión. La red de tu equipo solo se abre mientras eres anfitrión de una partida; si Windows o macOS
+        preguntan por el firewall, pulsa <i>Permitir</i>. Si alguien cierra la app, al otro se le avisa.
       </p>
     </div>
   </main>

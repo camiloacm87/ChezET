@@ -3,10 +3,15 @@
   const GLYPH = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟' };
   const glyph = p => GLYPH[p.toLowerCase()] + '︎';
   const COLOR_NAME = ['Blancas', 'Negras'];
+  // Sin datos guardados entre usos: todo vive solo mientras la ventana está abierta.
+  try { localStorage.clear(); } catch {}
   const store = {
-    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
   };
+  let es = null;
+  let ended = false;
+  let lastOk = Date.now();
 
   let token = '';
   let info = null;
@@ -61,6 +66,12 @@
         (info.isLocal ? '<small><a href="/">Ir al inicio para crear una</a></small>' : '');
       return;
     }
+    // Llegada desde la pantalla de inicio de otro equipo: asiento y vuelta en el #hash
+    const hash = new URLSearchParams(location.hash.slice(1));
+    if (hash.has('t')) {
+      store.set('chezzred.seat', JSON.stringify({ gid: info.gameId, tok: hash.get('t') }));
+      if (hash.get('back')) store.set('chezzred.back', hash.get('back'));
+    }
     let saved = null;
     try { saved = JSON.parse(store.get('chezzred.seat') || 'null'); } catch {}
     if (saved && saved.gid === info.gameId) {
@@ -83,12 +94,57 @@
   }
 
   function connect() {
-    const es = new EventSource('/api/events?token=' + encodeURIComponent(token));
+    es = new EventSource('/api/events?token=' + encodeURIComponent(token));
     es.onmessage = e => {
+      lastOk = Date.now();
       setConn(true);
       onView(JSON.parse(e.data));
     };
     es.onerror = () => setConn(false);
+    // Si el anfitrión desaparece sin avisar (corte de red, apagado), se da la
+    // partida por terminada tras unos segundos sin poder reconectar.
+    setInterval(() => {
+      if (es.readyState === EventSource.OPEN) lastOk = Date.now();
+      else if (!ended && Date.now() - lastOk > 10000) showEnded('Se perdió la conexión con el anfitrión');
+    }, 1000);
+  }
+
+  const homeUrl = () => (info && info.isLocal ? '/' : store.get('chezzred.back'));
+
+  function showEnded(msg) {
+    if (ended) return;
+    ended = true;
+    if (es) es.close();
+    $('promo').classList.add('hidden');
+    setConn(false);
+    $('conn').textContent = 'Desconectado';
+    const home = homeUrl();
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.innerHTML = `<div class="dialog"><h3></h3><p class="sub" style="color:var(--muted)"></p>
+      ${home ? '<button>Volver al inicio</button>' : ''}</div>`;
+    ov.querySelector('h3').textContent = msg;
+    document.body.appendChild(ov);
+    if (!home) { ov.querySelector('p').textContent = 'Ya puedes cerrar esta ventana.'; return; }
+    const go = () => { location.href = home; };
+    ov.querySelector('button').onclick = go;
+    let n = 5;
+    const tick = () => {
+      ov.querySelector('p').textContent = `Volviendo al inicio en ${n} s…`;
+      if (n-- <= 0) go(); else setTimeout(tick, 1000);
+    };
+    tick();
+    sound('end');
+  }
+
+  async function leave() {
+    if (!confirm('¿Salir de la partida? Se avisará a tu rival y la partida terminará.')) return;
+    ended = true;
+    if (es) es.close();
+    try { await api('/api/action', { token, type: 'leave' }); } catch {}
+    const home = homeUrl();
+    if (home) location.href = home;
+    else $('status').textContent = 'Saliste de la partida. Ya puedes cerrar esta ventana.';
   }
 
   function setConn(ok) {
@@ -99,8 +155,8 @@
 
   function onView(v) {
     if (!v.gameId) {
-      $('status').innerHTML = 'El anfitrión canceló la partida.' + (info.isLocal ? '<small><a href="/">Volver al inicio</a></small>' : '');
       $('buttons').innerHTML = '';
+      showEnded(v.ended || 'La partida terminó');
       return;
     }
     if (view && v.gameId !== view.gameId) { location.reload(); return; }
@@ -295,6 +351,7 @@
       }
     }
     box.append(btn('Girar tablero', 'secondary', () => { userFlip = !userFlip; render(); }));
+    if (me >= 0) box.append(btn('Salir de la partida', 'secondary', leave));
   }
 
   function renderMoves() {

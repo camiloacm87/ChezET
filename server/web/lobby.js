@@ -1,8 +1,10 @@
 (() => {
   const $ = id => document.getElementById(id);
+  // Sin datos guardados entre usos: todo vive solo mientras la ventana está abierta.
+  try { localStorage.clear(); } catch {}
   const store = {
-    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
-    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+    get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
   };
 
   async function api(path, body) {
@@ -10,7 +12,7 @@
       ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
       : { cache: 'no-store' });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'Error ' + r.status);
+    if (!r.ok) { const e = new Error(j.error || 'Error ' + r.status); e.status = r.status; throw e; }
     return j;
   }
 
@@ -46,18 +48,13 @@
       return;
     }
 
+    // Al volver al inicio ya no se está en la partida de otro equipo.
+    api('/api/remote', {}).catch(() => {});
+
     $('localView').classList.remove('hidden');
     $('name').value = saved;
     $('name').addEventListener('input', () => store.set('chezzred.name', $('name').value.trim()));
-    $('myaddr').textContent = info.primary ? `Tu dirección: ${info.primary}:${info.port}` : '';
-    $('ips').innerHTML = '';
-    (info.ips.length ? info.ips : ['(sin red)']).forEach((ip, i) => {
-      const d = document.createElement('div');
-      d.style.margin = '4px 0';
-      d.innerHTML = `<span class="addr"></span>${i === 0 && info.ips.length > 1 ? ' <small style="color:var(--muted)">(principal)</small>' : ''}`;
-      d.querySelector('.addr').textContent = info.ips.length ? `${ip}:${info.port}` : ip;
-      $('ips').appendChild(d);
-    });
+    showAddresses();
 
     if (info.hosting) {
       $('activeGame').classList.remove('hidden');
@@ -69,7 +66,7 @@
     $('create').onclick = create;
     $('backToGame').onclick = () => { location.href = '/game'; };
     $('cancelGame').onclick = async () => {
-      if (!confirm('¿Cancelar la partida actual?')) return;
+      if (!confirm('¿Cancelar la partida actual? Se cerrará la red y se avisará a tu rival.')) return;
       await api('/api/cancel', {});
       location.reload();
     };
@@ -79,6 +76,26 @@
 
     refreshPeers();
     setInterval(refreshPeers, 2000);
+  }
+
+  function showAddresses() {
+    const box = $('ips');
+    box.innerHTML = '';
+    if (!info.hosting || !info.port) {
+      $('myaddr').textContent = '● Red cerrada';
+      $('ipsLabel').textContent = 'La red de tu equipo está cerrada: nadie puede verlo ni conectarse.';
+      box.innerHTML = '<div class="empty">Se abrirá al crear la partida y se cerrará al terminarla o al cerrar la app.</div>';
+      return;
+    }
+    $('myaddr').textContent = info.primary ? `● Red abierta: ${info.primary}:${info.port}` : '● Red abierta';
+    $('ipsLabel').textContent = 'Tu oponente se conecta a esta dirección:';
+    (info.ips.length ? info.ips : ['(sin red)']).forEach((ip, i) => {
+      const d = document.createElement('div');
+      d.style.margin = '4px 0';
+      d.innerHTML = `<span class="addr"></span>${i === 0 && info.ips.length > 1 ? ' <small style="color:var(--muted)">(principal)</small>' : ''}`;
+      d.querySelector('.addr').textContent = info.ips.length ? `${ip}:${info.port}` : ip;
+      box.appendChild(d);
+    });
   }
 
   async function create() {
@@ -136,12 +153,24 @@
       clearTimeout(t);
       const j = await r.json();
       if (!j.gameId) throw new Error('nogame');
-      location.href = `${base}/game?name=${encodeURIComponent(name)}`;
     } catch (e) {
       $('joinMsg').textContent = e.message === 'nogame'
         ? 'Ese equipo no tiene ninguna partida creada todavía.'
-        : `No se pudo conectar con ${host}:${port}. Revisa la IP y que el firewall del anfitrión permita la app.`;
+        : `No se pudo conectar con ${host}:${port}. Revisa la IP y que el anfitrión haya creado la partida.`;
+      return;
     }
+    // Ocupar el asiento libre (si está llena, se entra como espectador).
+    let token = '';
+    try {
+      const j = await api(base + '/api/join', { name });
+      token = j.token;
+      // Para avisar al anfitrión si se cierra esta app durante la partida.
+      await api('/api/remote', { base, token }).catch(() => {});
+    } catch (e) {
+      if (e.status !== 409) { $('joinMsg').textContent = e.message; return; }
+    }
+    const back = location.origin + '/';
+    location.href = `${base}/game#t=${encodeURIComponent(token)}&back=${encodeURIComponent(back)}`;
   }
 
   init().catch(e => { document.body.insertAdjacentHTML('beforeend', `<p class="msg" style="text-align:center">${e.message}</p>`); });

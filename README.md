@@ -39,7 +39,14 @@ Incluye todas las reglas (enroque, captura al paso, coronación, jaque mate, rey
 material insuficiente, 50 movimientos y triple repetición), ofrecer tablas, rendirse, revancha
 (con cambio de colores), chat y reconexión.
 
-**Firewall:** la primera vez Windows/macOS preguntarán si permitir conexiones de red: pulsar *Permitir*.
+**Red y desconexión:**
+- Al abrir la app, el equipo **no es accesible desde la red**: la interfaz solo escucha dentro del propio equipo.
+  El puerto de red se abre únicamente al **crear** una partida y se cierra al terminarla, al salir o al cerrar la app.
+- Si un jugador cierra la app o pulsa *Salir de la partida*, al otro le aparece el aviso, la partida termina
+  y vuelve a la pantalla de inicio. Si se corta la red, el aviso llega a los 10 segundos.
+- La app **empieza siempre desde cero**: no guarda partidas, nombres ni direcciones entre usos.
+
+**Firewall:** la primera vez que crees una partida, Windows/macOS preguntarán si permitir conexiones de red: pulsar *Permitir*.
 Puertos: TCP 8765 (partida) y UDP 8766 (descubrimiento). Si la red bloquea el descubrimiento,
 unirse escribiendo la IP sigue funcionando.
 
