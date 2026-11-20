@@ -1,4 +1,5 @@
 # Archivos compilados (se generan con build.ps1 / build_mac.sh / GitHub Actions)
+Ejecutables/
 dist/
 *.syso
 *.exe~

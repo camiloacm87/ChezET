@@ -1,6 +1,6 @@
 #!/bin/bash
-# Compila la app de macOS con ventana propia: "dist/Ajedrez en Red.app"
-# (universal: Apple Silicon + Intel) y la empaqueta en dist/AjedrezEnRed-Mac.zip.
+# Compila la app de macOS con ventana propia: "Ejecutables/Mac/Ajedrez en Red.app"
+# (universal: Apple Silicon + Intel) y la empaqueta en Ejecutables/Mac/AjedrezEnRed-Mac.zip.
 #
 # Debe ejecutarse EN un Mac con:
 #   - Go 1.22 o superior        (https://go.dev/dl/)
@@ -9,18 +9,19 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-APP="dist/Ajedrez en Red.app"
-rm -rf "$APP" dist/AjedrezEnRed-Mac.zip
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+OUT="Ejecutables/Mac"
+APP="$OUT/Ajedrez en Red.app"
+rm -rf "$APP" "$OUT/AjedrezEnRed-Mac.zip"
+mkdir -p "$OUT" "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
 export CGO_ENABLED=1
 export MACOSX_DEPLOYMENT_TARGET=12.0
 echo "Compilando para Apple Silicon…"
-GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/.ajedrez-arm64 .
+GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o "$OUT"/.ajedrez-arm64 .
 echo "Compilando para Intel…"
-GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/.ajedrez-amd64 .
-lipo -create -output "$APP/Contents/MacOS/AjedrezEnRed" dist/.ajedrez-arm64 dist/.ajedrez-amd64
-rm -f dist/.ajedrez-arm64 dist/.ajedrez-amd64
+GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o "$OUT"/.ajedrez-amd64 .
+lipo -create -output "$APP/Contents/MacOS/AjedrezEnRed" "$OUT"/.ajedrez-arm64 "$OUT"/.ajedrez-amd64
+rm -f "$OUT"/.ajedrez-arm64 "$OUT"/.ajedrez-amd64
 
 cp packaging/mac/Info.plist "$APP/Contents/Info.plist"
 
@@ -38,7 +39,7 @@ rm -rf "$TMP"
 echo "Firmando (ad-hoc)…"
 codesign --force --deep --sign - "$APP"
 
-(cd dist && ditto -c -k --keepParent "Ajedrez en Red.app" "AjedrezEnRed-Mac.zip")
+(cd "$OUT" && ditto -c -k --keepParent "Ajedrez en Red.app" "AjedrezEnRed-Mac.zip")
 echo
 echo "Listo: $APP"
-echo "       dist/AjedrezEnRed-Mac.zip (para repartir)"
+echo "       $OUT/AjedrezEnRed-Mac.zip (para repartir)"

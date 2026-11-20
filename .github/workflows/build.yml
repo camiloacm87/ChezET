@@ -18,7 +18,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: AjedrezEnRed-Mac
-          path: dist/AjedrezEnRed-Mac.zip
+          path: Ejecutables/Mac/AjedrezEnRed-Mac.zip
 
   windows:
     runs-on: windows-latest
@@ -32,4 +32,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: AjedrezEnRed-Windows
-          path: dist/AjedrezEnRed.exe
+          path: Ejecutables/Windows/AjedrezEnRed.exe

@@ -6,9 +6,9 @@ Ajedrez para dos jugadores por la red local del trabajo. Sin instalación, sin i
 
 | Sistema | Archivo | Cómo se obtiene |
 |---|---|---|
-| **Windows** | `dist/AjedrezEnRed.exe` — app con ventana propia e icono | `.\build.ps1` en Windows |
-| **macOS** | `dist/Ajedrez en Red.app` (en `AjedrezEnRed-Mac.zip`) — app con ventana propia, universal Intel + Apple Silicon | `bash build_mac.sh` **en un Mac**, o automáticamente con GitHub Actions |
-| macOS (provisional) | `dist/AjedrezEnRed-Mac-sin-ventana.zip` — funciona en el navegador | `.\build.ps1` en Windows |
+| **Windows** | `Ejecutables/Windows/AjedrezEnRed.exe` — app con ventana propia e icono | `.\build.ps1` en Windows |
+| **macOS** | `Ejecutables/Mac/Ajedrez en Red.app` (en `AjedrezEnRed-Mac.zip`) — app con ventana propia, universal Intel + Apple Silicon | `bash build_mac.sh` **en un Mac**, o automáticamente con GitHub Actions |
+| macOS (provisional) | `Ejecutables/Mac/AjedrezEnRed-Mac-sin-ventana.zip` — funciona en el navegador | `.\build.ps1` en Windows |
 | Android | (próximamente) | ver [ANDROID.md](ANDROID.md) |
 
 **Windows:** doble clic en `AjedrezEnRed.exe`. Si sale SmartScreen: *Más información → Ejecutar de todas formas*.
