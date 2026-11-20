@@ -1,0 +1,35 @@
+# Compila automáticamente la app de Windows y la de Mac en los servidores de GitHub.
+# Los archivos resultantes aparecen en la pestaña "Actions" → la ejecución → "Artifacts".
+name: Compilar apps
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: bash build_mac.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AjedrezEnRed-Mac
+          path: dist/AjedrezEnRed-Mac.zip
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - shell: pwsh
+        run: ./build.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AjedrezEnRed-Windows
+          path: dist/AjedrezEnRed.exe

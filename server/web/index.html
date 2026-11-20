@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ajedrez en Red</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>♞</text></svg>">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="topbar">
+    <span class="brand">♞ Ajedrez en Red</span>
+    <span class="spacer"></span>
+    <span class="conn" id="myaddr"></span>
+  </div>
+
+  <main class="lobby">
+    <h1>Ajedrez en Red</h1>
+    <p class="sub">Juega una partida contra un compañero de la red del trabajo.</p>
+
+    <!-- Vista cuando alguien abre la dirección de este equipo desde otro PC -->
+    <div id="remoteView" class="card hidden">
+      <h2 id="remoteTitle">Partida disponible</h2>
+      <div class="row"><input id="remoteName" placeholder="Tu nombre" maxlength="24"></div>
+      <div class="row"><button id="remoteJoin">Entrar a la partida</button></div>
+      <div class="msg" id="remoteMsg"></div>
+    </div>
+
+    <div id="localView" class="hidden">
+      <div class="card" style="margin-bottom:18px">
+        <div class="label">Tu nombre</div>
+        <div class="row" style="margin:0"><input id="name" placeholder="Escribe tu nombre" maxlength="24"></div>
+      </div>
+
+      <div class="cards">
+        <section class="card">
+          <h2>Crear partida</h2>
+          <div id="activeGame" class="active-game hidden">
+            <div id="activeText" style="margin-bottom:10px"></div>
+            <div class="row" style="margin:0">
+              <button id="backToGame">Volver a la partida</button>
+              <button id="cancelGame" class="danger">Cancelar partida</button>
+            </div>
+          </div>
+          <div class="label">Quiero jugar con</div>
+          <div class="colors">
+            <label><input type="radio" name="color" value="w" checked> ♔ Blancas</label>
+            <label><input type="radio" name="color" value="b"> ♚ Negras</label>
+            <label><input type="radio" name="color" value="r"> 🎲 Al azar</label>
+          </div>
+          <div class="row"><button id="create" style="width:100%">Crear partida</button></div>
+          <div class="label" style="margin-top:14px">Tu oponente se conecta a esta dirección:</div>
+          <div id="ips"></div>
+          <div class="msg" id="createMsg"></div>
+        </section>
+
+        <section class="card">
+          <h2>Unirse a una partida</h2>
+          <div class="label">Partidas encontradas en la red</div>
+          <ul class="peers" id="peers"></ul>
+          <div class="empty" id="noPeers">Buscando partidas… (si no aparece, escribe la IP abajo)</div>
+          <div class="label" style="margin-top:16px">O escribe la dirección del anfitrión</div>
+          <div class="row">
+            <input id="manual" placeholder="Ej: 192.168.1.25  o  192.168.1.25:8765">
+            <button id="manualJoin">Unirse</button>
+          </div>
+          <div class="msg" id="joinMsg"></div>
+        </section>
+      </div>
+
+      <p class="help">
+        <b>¿Cómo se juega?</b> Uno de los dos pulsa <i>Crear partida</i>. El otro abre la app en su equipo y elige la
+        partida en la lista de <i>Partidas encontradas</i> o escribe la dirección que se muestra en el equipo del
+        anfitrión. Si Windows o macOS preguntan por el firewall, pulsa <i>Permitir</i>. Mantén abierta la ventana
+        negra del programa mientras juegas.
+      </p>
+    </div>
+  </main>
+  <script src="/lobby.js"></script>
+</body>
+</html>
