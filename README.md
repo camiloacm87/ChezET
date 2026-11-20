@@ -11,6 +11,7 @@ y también en **[Releases](https://github.com/camiloacm87/ChezET/releases/latest
 |---|---|
 | **Windows 10/11** | [`Ejecutables/Windows/AjedrezEnRed.exe`](Ejecutables/Windows/AjedrezEnRed.exe) — app con ventana propia e icono |
 | **macOS 12+** (Intel y Apple Silicon) | [`Ejecutables/Mac/AjedrezEnRed-Mac.zip`](Ejecutables/Mac/AjedrezEnRed-Mac.zip) — contiene *Ajedrez en Red.app* |
+| **Linux** (64 bits) | [`Ejecutables/Linux/AjedrezEnRed-Linux.tar.gz`](Ejecutables/Linux/AjedrezEnRed-Linux.tar.gz) — descomprimir y ejecutar `./instalar.sh` |
 | Android | (próximamente) — ver [ANDROID.md](ANDROID.md) |
 
 Para descargar un archivo desde la carpeta: ábrelo y pulsa el botón de descarga (⤓) de la derecha.
@@ -54,10 +55,10 @@ Requiere [Go](https://go.dev/dl/) 1.22+.
 
 ## Estructura
 
-- `main.go`, `window_*.go` — app de escritorio: ventana propia (WebView2 en Windows, WebKit en Mac).
+- `main.go`, `window_*.go` — app de escritorio: ventana propia (WebView2 en Windows, WebKit en Mac, WebKitGTK en Linux).
 - `server/server.go` — núcleo: servidor local, sincronización en tiempo real (SSE), descubrimiento UDP.
 - `server/web/` — interfaz y motor de reglas (`chess.js`, validado con pruebas perft).
 - `packaging/` — icono e `Info.plist` de Mac.
 - `tools/mkrsrc` — incrusta icono y manifiesto en el `.exe`.
 - `Ejecutables/` — apps compiladas listas para descargar.
-- `build.ps1`, `build_mac.sh`, `.github/workflows/build.yml` — compilación.
+- `build.ps1` (Windows), `build_mac.sh` (en un Mac), `build_linux.sh` (en Linux), `.github/workflows/build.yml` — compilación.

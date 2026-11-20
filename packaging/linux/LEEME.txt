@@ -1,0 +1,23 @@
+AJEDREZ EN RED - Linux (64 bits, x86_64)
+========================================
+
+Opción A - Instalar (recomendado):
+    ./instalar.sh
+  Aparecerá "Ajedrez en Red" en el menú de aplicaciones. No necesita sudo.
+
+Opción B - Ejecutar directamente:
+    ./AjedrezEnRed              (ventana propia; necesita WebKitGTK)
+    ./AjedrezEnRed-navegador    (funciona en cualquier Linux; usa el navegador)
+
+La versión con ventana necesita WebKitGTK 4.1, que ya viene en la mayoría de
+escritorios (Ubuntu 22.04+, Debian 12+, Fedora, Linux Mint 21+). Si no lo tienes:
+    Ubuntu/Debian/Mint: sudo apt install libwebkit2gtk-4.1-0
+    Fedora:             sudo dnf install webkit2gtk4.1
+
+Firewall: si usas ufw activo, permite el juego con
+    sudo ufw allow 8765/tcp
+    sudo ufw allow 8766/udp
+
+Para desinstalar:
+    rm -rf ~/.local/share/ajedrez-en-red ~/.local/share/applications/ajedrez-en-red.desktop \
+           ~/.local/share/icons/hicolor/256x256/apps/ajedrez-en-red.png

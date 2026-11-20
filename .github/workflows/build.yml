@@ -1,7 +1,7 @@
 # Compila automáticamente la app de Windows y la de Mac en los servidores de GitHub.
 #  - En cada push: los archivos quedan en la pestaña "Actions" → la ejecución → "Artifacts".
 #  - Al subir una etiqueta de versión (p. ej. v1.2.0): además se publica una Release con
-#    AjedrezEnRed.exe y AjedrezEnRed-Mac.zip para descargar sin iniciar sesión.
+#    AjedrezEnRed.exe, AjedrezEnRed-Mac.zip y AjedrezEnRed-Linux.tar.gz para descargar sin iniciar sesión.
 #      git tag v1.2.0
 #      git push origin v1.2.0
 name: Compilar apps
@@ -40,9 +40,23 @@ jobs:
           name: AjedrezEnRed-Windows
           path: Ejecutables/Windows/AjedrezEnRed.exe
 
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - run: sudo apt-get update && sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - run: bash build_linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AjedrezEnRed-Linux
+          path: Ejecutables/Linux/AjedrezEnRed-Linux.tar.gz
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [mac, windows]
+    needs: [mac, windows, linux]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -65,9 +79,10 @@ jobs:
           |---|---|
           | **Windows 10/11** | `AjedrezEnRed.exe` — doble clic para jugar. Si aparece SmartScreen: *Más información → Ejecutar de todas formas*. |
           | **macOS 12+** (Intel y Apple Silicon) | `AjedrezEnRed-Mac.zip` — descomprimir, arrastrar *Ajedrez en Red* a Aplicaciones y la primera vez abrir con clic derecho → *Abrir* (macOS 15+: Ajustes del Sistema → Privacidad y seguridad → *Abrir igualmente*). |
+          | **Linux** (64 bits) | `AjedrezEnRed-Linux.tar.gz` — descomprimir y ejecutar `./instalar.sh` (o `./AjedrezEnRed`). Ver `LEEME.txt`. |
 
           **Cómo jugar:** los dos abren la app, uno pulsa *Crear partida* y el otro *Unirse*.
           La primera vez, permite el acceso a la red cuando el sistema lo pregunte.
           EOF
-          gh release create "$TAG" descargas/AjedrezEnRed.exe descargas/AjedrezEnRed-Mac.zip \
+          gh release create "$TAG" descargas/AjedrezEnRed.exe descargas/AjedrezEnRed-Mac.zip descargas/AjedrezEnRed-Linux.tar.gz \
             --repo "$GITHUB_REPOSITORY" --title "Ajedrez en Red $TAG" --notes-file notas.md

@@ -1,4 +1,4 @@
-//go:build darwin && cgo
+//go:build (darwin || linux) && cgo
 
 package main
 
@@ -9,9 +9,11 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
-func init() { runtime.LockOSThread() } // macOS exige la UI en el hilo principal
+// macOS y GTK exigen que la interfaz corra en el hilo principal.
+func init() { runtime.LockOSThread() }
 
-// runWindow muestra la interfaz en una ventana propia (WebKit).
+// runWindow muestra la interfaz en una ventana propia
+// (WebKit en macOS, WebKitGTK en Linux).
 func runWindow(url string) bool {
 	w := webview.New(false)
 	if w == nil {
