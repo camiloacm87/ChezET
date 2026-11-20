@@ -1,9 +1,15 @@
 # Compila automáticamente la app de Windows y la de Mac en los servidores de GitHub.
-# Los archivos resultantes aparecen en la pestaña "Actions" → la ejecución → "Artifacts".
+#  - En cada push: los archivos quedan en la pestaña "Actions" → la ejecución → "Artifacts".
+#  - Al subir una etiqueta de versión (p. ej. v1.2.0): además se publica una Release con
+#    AjedrezEnRed.exe y AjedrezEnRed-Mac.zip para descargar sin iniciar sesión.
+#      git tag v1.2.0
+#      git push origin v1.2.0
 name: Compilar apps
 
 on:
   push:
+    branches: [main]
+    tags: ['v*']
   workflow_dispatch:
 
 jobs:
@@ -33,3 +39,35 @@ jobs:
         with:
           name: AjedrezEnRed-Windows
           path: Ejecutables/Windows/AjedrezEnRed.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: descargas
+          merge-multiple: true
+      - name: Publicar Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cat > notas.md <<'EOF'
+          ## ♞ Ajedrez en Red
+
+          Ajedrez para dos jugadores por la red local del trabajo.
+
+          | Sistema | Descarga |
+          |---|---|
+          | **Windows 10/11** | `AjedrezEnRed.exe` — doble clic para jugar. Si aparece SmartScreen: *Más información → Ejecutar de todas formas*. |
+          | **macOS 12+** (Intel y Apple Silicon) | `AjedrezEnRed-Mac.zip` — descomprimir, arrastrar *Ajedrez en Red* a Aplicaciones y la primera vez abrir con clic derecho → *Abrir* (macOS 15+: Ajustes del Sistema → Privacidad y seguridad → *Abrir igualmente*). |
+
+          **Cómo jugar:** los dos abren la app, uno pulsa *Crear partida* y el otro *Unirse*.
+          La primera vez, permite el acceso a la red cuando el sistema lo pregunte.
+          EOF
+          gh release create "$TAG" descargas/AjedrezEnRed.exe descargas/AjedrezEnRed-Mac.zip \
+            --repo "$GITHUB_REPOSITORY" --title "Ajedrez en Red $TAG" --notes-file notas.md

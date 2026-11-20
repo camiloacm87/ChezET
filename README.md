@@ -2,6 +2,10 @@
 
 Ajedrez para dos jugadores por la red local del trabajo. Sin instalación, sin internet y sin servidores externos.
 
+## Descargar
+
+👉 **[Última versión](https://github.com/camiloacm87/ChezET/releases/latest)**: `AjedrezEnRed.exe` (Windows) y `AjedrezEnRed-Mac.zip` (Mac).
+
 ## Apps
 
 | Sistema | Archivo | Cómo se obtiene |
