@@ -109,6 +109,30 @@ type Server struct {
 
 var current *Server
 
+var androidNetworkMu sync.RWMutex
+var androidPrimaryIP string
+var androidIPList []string
+
+// SetLocalNetwork permite a una aplicación anfitriona (por ejemplo Android)
+// proporcionar las direcciones visibles desde la red Wi-Fi. Es especialmente
+// necesario en Android 11+, donde las restricciones del sistema pueden impedir
+// que net.Interfaces/net.Dial descubran la IP local como esperan las apps Go.
+func SetLocalNetwork(primary string, ipsCSV string) {
+	androidNetworkMu.Lock()
+	androidPrimaryIP = strings.TrimSpace(primary)
+	androidIPList = nil
+	for _, ip := range strings.Split(ipsCSV, ",") {
+		ip = strings.TrimSpace(ip)
+		if ip != "" {
+			androidIPList = append(androidIPList, ip)
+		}
+	}
+	if androidPrimaryIP != "" && len(androidIPList) == 0 {
+		androidIPList = []string{androidPrimaryIP}
+	}
+	androidNetworkMu.Unlock()
+}
+
 // openLAN abre el puerto de red para que el rival pueda conectarse. Con s.mu tomado.
 func (s *Server) openLAN() error {
 	if s.lan != nil {
@@ -773,6 +797,18 @@ func broadcastAddrs() []net.IP {
 // localIPs devuelve la IP principal (la que se usaría para salir a la red) y
 // todas las IPv4 del equipo.
 func localIPs() (string, []string) {
+	androidNetworkMu.RLock()
+	if androidPrimaryIP != "" || len(androidIPList) > 0 {
+		primary := androidPrimaryIP
+		ips := append([]string(nil), androidIPList...)
+		androidNetworkMu.RUnlock()
+		if primary == "" && len(ips) > 0 {
+			primary = ips[0]
+		}
+		return primary, ips
+	}
+	androidNetworkMu.RUnlock()
+
 	primary := ""
 	if c, err := net.Dial("udp4", "10.255.255.255:9"); err == nil { // no envía paquetes
 		primary = c.LocalAddr().(*net.UDPAddr).IP.String()

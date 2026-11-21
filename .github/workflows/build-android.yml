@@ -1,0 +1,52 @@
+name: Compilar app Android
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Instalar gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          "$(go env GOPATH)/bin/gomobile" init
+
+      - name: Generar server.aar
+        run: |
+          mkdir -p packaging/android/app/libs
+          "$(go env GOPATH)/bin/gomobile" bind -target=android -javapkg=com.chezred.go ./server
+          mv server.aar packaging/android/app/libs/server.aar
+
+      - name: Preparar Gradle Wrapper
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Compilar APK
+        working-directory: packaging/android
+        run: |
+          gradle wrapper
+          ./gradlew assembleDebug
+
+      - name: Preparar ejecutable Android
+        run: |
+          mkdir -p Ejecutables/Android
+          cp packaging/android/app/build/outputs/apk/debug/app-debug.apk Ejecutables/Android/AjedrezEnRed.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AjedrezEnRed-Android
+          path: Ejecutables/Android/AjedrezEnRed.apk

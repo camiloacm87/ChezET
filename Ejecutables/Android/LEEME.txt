@@ -1,0 +1,19 @@
+Ajedrez en Red - Android 14+
+
+El APK se genera automaticamente con GitHub Actions desde:
+.github/workflows/build-android.yml
+
+Archivo esperado:
+AjedrezEnRed.apk
+
+Instalacion:
+1. Copia el APK al telefono.
+2. Activa en Ajustes la opcion de instalar aplicaciones desconocidas para el administrador de archivos o navegador usado.
+3. Abre AjedrezEnRed.apk y confirma la instalacion.
+
+Requisitos:
+- Android 14 o posterior recomendado.
+- Android 8.0 o posterior para la configuracion base minSdk 26.
+- Conexion Wi-Fi compartida para jugar por red local.
+
+Nota: el APK generado por el flujo actual es de depuracion (debug) y no esta firmado para Play Store.
