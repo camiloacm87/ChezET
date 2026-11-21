@@ -4,3 +4,12 @@ dist/
 *.exe~
 # La .app de Mac se sube comprimida (AjedrezEnRed-Mac.zip), no como carpeta
 Ejecutables/Mac/*.app/
+# Android: local.properties es específico de cada máquina
+packaging/android/local.properties
+# Android: caché de Gradle
+packaging/android/.gradle/
+packaging/android/build/
+packaging/android/app/build/
+# El AAR se genera con gomobile; no se sube al repo
+packaging/android/app/libs/server.aar
+packaging/android/app/libs/server-sources.jar

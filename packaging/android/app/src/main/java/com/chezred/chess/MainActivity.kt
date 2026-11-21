@@ -12,7 +12,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.ComponentActivity
-import com.chezred.go.server.Server
+import com.chezred.go.android.Android
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
@@ -41,7 +41,7 @@ class MainActivity : ComponentActivity() {
         updateNetworkAddresses()
 
         val url = try {
-            Server.start(8765)
+            Android.start(8765)
         } catch (error: Exception) {
             Toast.makeText(this, "No se pudo iniciar el juego: ${error.message}", Toast.LENGTH_LONG).show()
             null
@@ -79,7 +79,7 @@ class MainActivity : ComponentActivity() {
 
         val primary = addresses.firstOrNull().orEmpty()
         if (primary.isNotEmpty()) {
-            Server.setLocalNetwork(primary, addresses.joinToString(","))
+            Android.setLocalNetwork(primary, addresses.joinToString(","))
         }
     }
 
@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
         multicastLock?.takeIf { it.isHeld }?.release()
 
         try {
-            Server.shutdown()
+            Android.shutdown()
         } catch (_: Exception) {
         }
 
