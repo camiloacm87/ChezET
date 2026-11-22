@@ -64,6 +64,8 @@
     }
 
     $('create').onclick = create;
+    $('timeMode').addEventListener('change', updateTimeOptions);
+    updateTimeOptions();
     $('backToGame').onclick = () => { location.href = '/game'; };
     $('cancelGame').onclick = async () => {
       if (!confirm('¿Cancelar la partida actual? Se cerrará la red y se avisará a tu rival.')) return;
@@ -104,12 +106,29 @@
     if (info.hosting && !confirm('Ya tienes una partida. Si creas otra, la actual se perderá. ¿Continuar?')) return;
     const color = document.querySelector('input[name=color]:checked').value;
     try {
-      const j = await api('/api/create', { name, color });
+      const timeMode = $('timeMode').value;
+      const timeLimitSeconds = timeMode === 'per-move' || timeMode === 'total' ? +$('timeLimit').value : 0;
+      if (timeMode !== 'none' && (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 5 || timeLimitSeconds > 3600)) {
+        $('createMsg').textContent = 'El tiempo debe estar entre 5 segundos y 60 minutos.';
+        return;
+      }
+      const j = await api('/api/create', { name, color, timeMode, timeLimitSeconds });
       store.set('chezzred.seat', JSON.stringify({ gid: j.gameId, tok: j.token }));
       location.href = '/game';
     } catch (e) {
       $('createMsg').textContent = e.message;
     }
+  }
+
+  function updateTimeOptions() {
+    const mode = $('timeMode').value;
+    $('timeLimitLabel').classList.toggle('hidden', mode === 'none');
+    $('timeHelp').textContent = mode === 'per-move'
+      ? 'El jugador pierde al agotarse el tiempo de su turno (30 segundos sugeridos).'
+      : mode === 'total'
+        ? 'El reloj de cada jugador solo descuenta durante sus turnos (10 minutos sugeridos).'
+        : 'Elige un control de tiempo opcional para esta partida.';
+    $('timeLimit').value = mode === 'total' ? 600 : 30;
   }
 
   async function refreshPeers() {
@@ -168,6 +187,13 @@
       await api('/api/remote', { base, token }).catch(() => {});
     } catch (e) {
       if (e.status !== 409) { $('joinMsg').textContent = e.message; return; }
+      try {
+        const j = await api(base + '/api/watch', { name });
+        token = j.token;
+      } catch (watchError) {
+        $('joinMsg').textContent = watchError.message;
+        return;
+      }
     }
     const back = location.origin + '/';
     location.href = `${base}/game#t=${encodeURIComponent(token)}&back=${encodeURIComponent(back)}`;

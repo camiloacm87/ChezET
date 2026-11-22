@@ -211,3 +211,92 @@ func TestLocalListenerIsLoopbackOnly(t *testing.T) {
 		t.Fatalf("la interfaz no escucha solo en 127.0.0.1: %s", local)
 	}
 }
+
+func TestSpectatorCanComment(t *testing.T) {
+	_, lanURL, _, _, _ := startGame(t)
+	watch := post(t, lanURL+"api/watch", map[string]string{"name": "Observador"})
+	token := watch["token"].(string)
+	post(t, lanURL+"api/action", map[string]string{
+		"token": token,
+		"type":  "chat",
+		"text":  "¡Buena jugada!",
+	})
+
+	resp, err := http.Get(lanURL + "api/state?token=" + token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var state struct {
+		Chat []ChatMsg `json:"chat"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Chat) != 1 || state.Chat[0].From != "Observador" ||
+		state.Chat[0].Text != "¡Buena jugada!" || state.Chat[0].Color != -1 {
+		t.Fatalf("comentario de espectador inesperado: %+v", state.Chat)
+	}
+}
+
+func TestClockExpiresAndAwardsOpponent(t *testing.T) {
+	s := &Server{subs: make(map[*sub]struct{})}
+	g := &Game{
+		TimeMode:  "per-move",
+		TimeLimit: 30 * time.Millisecond,
+		Players:   [2]*Player{{Name: "Ana"}, {Name: "Luis"}},
+	}
+	s.mu.Lock()
+	s.game = g
+	s.startClockLocked(g)
+	s.mu.Unlock()
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		s.mu.Lock()
+		result, reason := g.Result, g.Reason
+		s.mu.Unlock()
+		if result != "" {
+			if result != "0-1" || reason != "Tiempo agotado" {
+				t.Fatalf("resultado por tiempo = %q (%q), se esperaba 0-1", result, reason)
+			}
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("el reloj no terminó la partida")
+}
+
+func TestTotalClockConsumesOnlyPlayerWhoMoved(t *testing.T) {
+	s := &Server{subs: make(map[*sub]struct{})}
+	g := &Game{
+		Players:     [2]*Player{{Name: "Ana", Token: "white"}, {Name: "Luis", Token: "black"}},
+		TimeMode:    "total",
+		TimeLimit:   10 * time.Second,
+		Remaining:   [2]time.Duration{10 * time.Second, 10 * time.Second},
+		TurnStarted: time.Now().Add(-4 * time.Second),
+	}
+	s.game = g
+
+	req := httptest.NewRequest(http.MethodPost, "/api/action", strings.NewReader(
+		`{"token":"white","type":"move","move":"e2e4","ply":0}`,
+	))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	s.handleAction(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("jugada con tiempo total: HTTP %d: %s", rec.Code, rec.Body.String())
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if g.Remaining[0] > 7*time.Second || g.Remaining[0] < 5*time.Second {
+		t.Fatalf("reloj de blancas = %s; se esperaban cerca de 6 segundos", g.Remaining[0])
+	}
+	if g.Remaining[1] != 10*time.Second {
+		t.Fatalf("el reloj de negras cambió antes de su turno: %s", g.Remaining[1])
+	}
+	if g.ClockTimer != nil {
+		g.ClockTimer.Stop()
+	}
+}

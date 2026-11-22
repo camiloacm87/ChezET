@@ -198,6 +198,11 @@ input:focus, select:focus { border-color: var(--accent); }
 .player-bar .chip.w { background: #f4f4f0; }
 .player-bar .chip.b { background: #222; border-color: #666; }
 .player-bar .pname { font-weight: 600; }
+.player-bar .clock {
+  min-width: 52px; padding: 3px 7px; border-radius: 6px; background: var(--bg);
+  font-family: Consolas, Menlo, monospace; font-weight: 700; text-align: center;
+}
+.player-bar .clock.low { color: #ff8278; }
 .player-bar .online { font-size: 12px; color: var(--muted); }
 .player-bar .online.on { color: var(--accent-h); }
 .player-bar .online.off { color: var(--danger); }
@@ -236,6 +241,7 @@ input:focus, select:focus { border-color: var(--accent); }
 .chat-log .m b { margin-right: 4px; }
 .chat-log .m.c0 b { color: #f2f2ee; }
 .chat-log .m.c1 b { color: #e0b070; }
+.chat-log .m.c-1 b { color: var(--accent-h); }
 .chat form { display: flex; gap: 6px; }
 .chat form input { flex: 1; min-width: 0; }
 .title-sm { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }

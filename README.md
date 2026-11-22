@@ -33,11 +33,13 @@ Necesita Microsoft Edge WebView2, que ya viene en Windows 10/11 (si faltara, el 
 2. Uno pulsa **Crear partida** (elige blancas, negras o al azar).
 3. El otro pulsa **Unirse** sobre la partida que aparece en *Partidas encontradas en la red*,
    o escribe la dirección que se muestra en el equipo del anfitrión (p. ej. `192.168.1.25:8765`).
-4. Mover: clic en la pieza y clic en el destino, o arrastrar y soltar.
+4. Al crear la partida, se puede elegir sin límite, un tiempo máximo por turno o un reloj total por jugador.
+   Mover: clic en la pieza y clic en el destino, o arrastrar y soltar.
 
 Incluye todas las reglas (enroque, captura al paso, coronación, jaque mate, rey ahogado, tablas por
 material insuficiente, 50 movimientos y triple repetición), ofrecer tablas, rendirse, revancha
-(con cambio de colores), chat y reconexión.
+(con cambio de colores), chat y reconexión. La lista muestra las casillas de salida y llegada de cada jugada.
+Quienes entren a una partida ya completa como espectadores también pueden participar en el chat.
 
 **Red y desconexión:**
 - Al abrir la app, el equipo **no es accesible desde la red**: la interfaz solo escucha dentro del propio equipo.

@@ -28,7 +28,11 @@
       ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
       : { cache: 'no-store' });
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'Error ' + r.status);
+    if (!r.ok) {
+      const e = new Error(j.error || 'Error ' + r.status);
+      e.status = r.status;
+      throw e;
+    }
     return j;
   }
 
@@ -76,17 +80,23 @@
     try { saved = JSON.parse(store.get('chezzred.seat') || 'null'); } catch {}
     if (saved && saved.gid === info.gameId) {
       token = saved.tok;
-    } else if (info.seatsFree > 0) {
+    } else {
       const params = new URLSearchParams(location.search);
       let name = params.get('name') || store.get('chezzred.name') || '';
       if (!name) name = (prompt('Tu nombre:') || '').trim() || 'Invitado';
       store.set('chezzred.name', name);
-      try {
-        const j = await api('/api/join', { name });
+      if (info.seatsFree > 0) {
+        try {
+          const j = await api('/api/join', { name });
+          token = j.token;
+          store.set('chezzred.seat', JSON.stringify({ gid: j.gameId, tok: j.token }));
+        } catch (e) {
+          if (e.status !== 409) throw e;
+        }
+      }
+      if (!token) {
+        const j = await api('/api/watch', { name });
         token = j.token;
-        store.set('chezzred.seat', JSON.stringify({ gid: j.gameId, tok: j.token }));
-      } catch (e) {
-        toast(e.message + ' — entrarás como espectador.');
       }
     }
     history.replaceState(null, '', '/game');
@@ -161,6 +171,7 @@
     }
     if (view && v.gameId !== view.gameId) { location.reload(); return; }
     const prev = view;
+    v.clockReceivedAt = Date.now();
     view = v;
     try {
       game = Chess.replay(v.moves);
@@ -271,9 +282,12 @@
       ? '<span class="online on">● en línea</span>'
       : '<span class="online off">● desconectado</span>';
     el.innerHTML = `<span class="chip ${idx === 0 ? 'w' : 'b'}"></span>
-      <span class="pname"></span>${online}
+      <span class="pname"></span>${online}<span class="clock"></span>
       <span class="caps">${cap.s}${cap.diff > 0 ? `<b>+${cap.diff}</b>` : ''}</span>`;
     el.querySelector('.pname').textContent = p.joined ? p.name + you : `Esperando oponente (${COLOR_NAME[idx].toLowerCase()})…`;
+    const clock = el.querySelector('.clock');
+    clock.dataset.idx = idx;
+    clock.classList.toggle('hidden', !view.timeMode || view.timeMode === 'none');
   }
 
   function renderBars() {
@@ -356,13 +370,13 @@
 
   function renderMoves() {
     const box = $('moves');
-    // Notación en español: R rey, D dama, T torre, A alfil, C caballo
-    const ES = { K: 'R', Q: 'D', R: 'T', B: 'A', N: 'C' };
-    const h = game.hist.map(x => ({ san: x.san.replace(/[KQRBN]/g, c => ES[c]) }));
+    const h = game.hist;
+    const ES = { Q: 'D', R: 'T', B: 'A', N: 'C' };
     let html = '<table>';
     for (let i = 0; i < h.length; i += 2) {
       const cur = j => (j === h.length - 1 ? ' class="cur"' : '');
-      html += `<tr><td class="n">${i / 2 + 1}.</td><td${cur(i)}>${h[i].san}</td><td${cur(i + 1)}>${h[i + 1] ? h[i + 1].san : ''}</td></tr>`;
+      const fromTo = j => `${Chess.sqName(h[j].from)} a ${Chess.sqName(h[j].to)}${h[j].uci.length > 4 ? '=' + ES[h[j].uci[4].toUpperCase()] : ''}`;
+      html += `<tr><td class="n">${i / 2 + 1}.</td><td${cur(i)}>${fromTo(i)}</td><td${cur(i + 1)}>${h[i + 1] ? fromTo(i + 1) : ''}</td></tr>`;
     }
     html += '</table>';
     if (!h.length) html = '<span class="empty">Aún no hay jugadas.</span>';
@@ -372,7 +386,7 @@
 
   function renderChat() {
     const form = $('chatForm');
-    form.style.display = myIdx() >= 0 ? '' : 'none';
+    form.style.display = token ? '' : 'none';
     if (view.chat.length === chatCount) return;
     const isNew = chatCount >= 0 && view.chat.length > chatCount;
     chatCount = view.chat.length;
@@ -398,6 +412,21 @@
     $('chatInput').value = '';
     act('chat', { text: t });
   });
+
+  function renderClocks() {
+    if (!view || !view.timeMode || view.timeMode === 'none') return;
+    const active = game && !isOver() ? (game.state.turn === 'w' ? 0 : 1) : -1;
+    const elapsed = active >= 0 ? Date.now() - view.clockReceivedAt : 0;
+    document.querySelectorAll('.clock').forEach(el => {
+      const idx = +el.dataset.idx;
+      const ms = Math.max(0, view.clocks[idx] - (idx === active ? elapsed : 0));
+      const totalSeconds = Math.ceil(ms / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      el.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
+      el.classList.toggle('low', idx === active && totalSeconds <= 10);
+    });
+  }
 
   // ---------- interacción con el tablero ----------
   const board = $('board');
@@ -478,8 +507,14 @@
     selected = -1;
     const u = Chess.uci(m);
     const ply = view.moves.length;
+    const now = Date.now();
+    const oldTurn = game.state.turn === 'w' ? 0 : 1;
+    const elapsed = now - view.clockReceivedAt;
+    const clocks = view.clocks.slice();
+    clocks[oldTurn] = Math.max(0, clocks[oldTurn] - elapsed);
+    if (view.timeMode === 'per-move') clocks[1 - oldTurn] = view.timeLimitMs;
     // Actualización optimista: se ve la jugada al instante
-    view = { ...view, moves: [...view.moves, u] };
+    view = { ...view, moves: [...view.moves, u], clocks, clockReceivedAt: now };
     game = Chess.replay(view.moves);
     const last = game.hist[game.hist.length - 1];
     sound(game.over ? 'end' : last.capture ? 'capture' : 'move');
@@ -495,4 +530,5 @@
   }
 
   init().catch(e => { $('status').textContent = 'Error: ' + e.message; });
+  setInterval(renderClocks, 250);
 })();

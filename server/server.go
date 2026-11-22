@@ -59,15 +59,21 @@ type ChatMsg struct {
 }
 
 type Game struct {
-	ID        string
-	Round     int
-	Players   [2]*Player // 0 = blancas, 1 = negras
-	Moves     []string   // jugadas en formato UCI (e2e4, e7e8q)
-	Result    string     // "", "1-0", "0-1", "1/2-1/2"
-	Reason    string
-	DrawOffer int // -1 ninguna, si no el color que ofrece
-	Rematch   [2]bool
-	Chat      []ChatMsg
+	ID          string
+	Round       int
+	Players     [2]*Player // 0 = blancas, 1 = negras
+	Spectators  map[string]string
+	Moves       []string // jugadas en formato UCI (e2e4, e7e8q)
+	Result      string   // "", "1-0", "0-1", "1/2-1/2"
+	Reason      string
+	DrawOffer   int // -1 ninguna, si no el color que ofrece
+	Rematch     [2]bool
+	Chat        []ChatMsg
+	TimeMode    string
+	TimeLimit   time.Duration
+	Remaining   [2]time.Duration
+	TurnStarted time.Time
+	ClockTimer  *time.Timer
 }
 
 type sub struct {
@@ -175,6 +181,9 @@ func (s *Server) endGame(reason string) {
 		return
 	}
 	log.Printf("Partida terminada: %s", reason)
+	if s.game.ClockTimer != nil {
+		s.game.ClockTimer.Stop()
+	}
 	s.game = nil
 	s.hostToken = ""
 	s.endReason = reason
@@ -246,6 +255,80 @@ func (s *Server) seatOf(token string) int {
 	return -1
 }
 
+func (s *Server) startClockLocked(g *Game) {
+	if g.TimeMode == "" || g.TimeMode == "none" || g.Result != "" ||
+		g.Players[0] == nil || g.Players[1] == nil {
+		return
+	}
+	if g.ClockTimer != nil {
+		g.ClockTimer.Stop()
+	}
+	g.TurnStarted = time.Now()
+	turn := len(g.Moves) % 2
+	duration := g.TimeLimit
+	if g.TimeMode == "total" {
+		duration = g.Remaining[turn]
+	} else {
+		g.Remaining[turn] = g.TimeLimit
+	}
+	started := g.TurnStarted
+	g.ClockTimer = time.AfterFunc(duration, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.game != g || g.Result != "" || !g.TurnStarted.Equal(started) {
+			return
+		}
+		s.expireClockLocked(g)
+		s.notify()
+	})
+}
+
+func (s *Server) expireClockLocked(g *Game) {
+	if g.ClockTimer != nil {
+		g.ClockTimer.Stop()
+	}
+	turn := len(g.Moves) % 2
+	g.Remaining[turn] = 0
+	g.Result = map[int]string{0: "0-1", 1: "1-0"}[turn]
+	g.Reason = "Tiempo agotado"
+}
+
+func (s *Server) stopClockLocked(g *Game) {
+	if g.ClockTimer != nil {
+		g.ClockTimer.Stop()
+	}
+	if g.TurnStarted.IsZero() {
+		return
+	}
+	turn := len(g.Moves) % 2
+	available := g.TimeLimit
+	if g.TimeMode == "total" {
+		available = g.Remaining[turn]
+	}
+	left := available - time.Since(g.TurnStarted)
+	if left < 0 {
+		left = 0
+	}
+	g.Remaining[turn] = left
+	g.TurnStarted = time.Time{}
+}
+
+func (s *Server) clockExpiredLocked(g *Game) bool {
+	if g.TimeMode == "" || g.TimeMode == "none" || g.TurnStarted.IsZero() || g.Result != "" {
+		return false
+	}
+	turn := len(g.Moves) % 2
+	available := g.TimeLimit
+	if g.TimeMode == "total" {
+		available = g.Remaining[turn]
+	}
+	if time.Since(g.TurnStarted) < available {
+		return false
+	}
+	s.expireClockLocked(g)
+	return true
+}
+
 type playerView struct {
 	Name   string `json:"name"`
 	Joined bool   `json:"joined"`
@@ -274,18 +357,34 @@ func (s *Server) viewJSON(token string) []byte {
 		chat = []ChatMsg{}
 	}
 	b, _ := json.Marshal(map[string]any{
-		"gameId":    g.ID,
-		"round":     g.Round,
-		"you":       s.seatOf(token),
-		"players":   ps,
-		"moves":     moves,
-		"result":    g.Result,
-		"reason":    g.Reason,
-		"drawOffer": g.DrawOffer,
-		"rematch":   g.Rematch,
-		"chat":      chat,
+		"gameId":      g.ID,
+		"round":       g.Round,
+		"you":         s.seatOf(token),
+		"players":     ps,
+		"moves":       moves,
+		"result":      g.Result,
+		"reason":      g.Reason,
+		"drawOffer":   g.DrawOffer,
+		"rematch":     g.Rematch,
+		"chat":        chat,
+		"timeMode":    g.TimeMode,
+		"timeLimitMs": g.TimeLimit.Milliseconds(),
+		"clocks":      s.clockView(g),
 	})
 	return b
+}
+
+func (s *Server) clockView(g *Game) [2]int64 {
+	clocks := [2]int64{g.Remaining[0].Milliseconds(), g.Remaining[1].Milliseconds()}
+	if g.Result == "" && !g.TurnStarted.IsZero() && g.TimeMode != "" && g.TimeMode != "none" {
+		turn := len(g.Moves) % 2
+		left := clocks[turn] - time.Since(g.TurnStarted).Milliseconds()
+		if left < 0 {
+			left = 0
+		}
+		clocks[turn] = left
+	}
+	return clocks
 }
 
 func (s *Server) hostName() string {
@@ -347,11 +446,24 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Name  string `json:"name"`
-		Color string `json:"color"`
+		Name             string `json:"name"`
+		Color            string `json:"color"`
+		TimeMode         string `json:"timeMode"`
+		TimeLimitSeconds int    `json:"timeLimitSeconds"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		fail(w, 400, "petición inválida")
+		return
+	}
+	if req.TimeMode == "" {
+		req.TimeMode = "none"
+	}
+	if req.TimeMode != "none" && req.TimeMode != "per-move" && req.TimeMode != "total" {
+		fail(w, 400, "configuración de tiempo inválida")
+		return
+	}
+	if req.TimeMode != "none" && (req.TimeLimitSeconds < 5 || req.TimeLimitSeconds > 3600) {
+		fail(w, 400, "el tiempo debe estar entre 5 segundos y 60 minutos")
 		return
 	}
 	seat := 0
@@ -364,7 +476,11 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		seat = int(b[0] & 1)
 	}
 	tok := newToken()
-	g := &Game{ID: newToken()[:8], DrawOffer: -1}
+	limit := time.Duration(req.TimeLimitSeconds) * time.Second
+	g := &Game{ID: newToken()[:8], DrawOffer: -1, TimeMode: req.TimeMode, TimeLimit: limit}
+	if req.TimeMode != "none" {
+		g.Remaining = [2]time.Duration{limit, limit}
+	}
 	g.Players[seat] = &Player{Name: cleanName(req.Name), Token: tok}
 	s.mu.Lock()
 	if err := s.openLAN(); err != nil {
@@ -436,6 +552,9 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		if p == nil {
 			tok := newToken()
 			s.game.Players[i] = &Player{Name: cleanName(req.Name), Token: tok}
+			if s.game.Players[0] != nil && s.game.Players[1] != nil {
+				s.startClockLocked(s.game)
+			}
 			s.notify()
 			log.Printf("%q se unió a la partida desde %s", cleanName(req.Name), r.RemoteAddr)
 			writeJSON(w, 200, map[string]any{"gameId": s.game.ID, "token": tok})
@@ -443,6 +562,36 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	fail(w, 409, "la partida ya tiene dos jugadores")
+}
+
+func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		fail(w, 405, "método no permitido")
+		return
+	}
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, "petición inválida")
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.game == nil {
+		fail(w, 404, "no hay partida creada")
+		return
+	}
+	if s.game.Players[0] == nil || s.game.Players[1] == nil {
+		fail(w, 409, "la partida todavía no está llena")
+		return
+	}
+	if s.game.Spectators == nil {
+		s.game.Spectators = make(map[string]string)
+	}
+	token := newToken()
+	s.game.Spectators[token] = cleanName(req.Name)
+	writeJSON(w, 200, map[string]any{"gameId": s.game.ID, "token": token})
 }
 
 func (s *Server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -559,12 +708,21 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	me := s.seatOf(req.Token)
-	if me < 0 {
+	spectatorName, isSpectator := g.Spectators[req.Token]
+	if me < 0 && !(req.Type == "chat" && isSpectator && req.Token != "") {
 		fail(w, 403, "no eres jugador de esta partida")
 		return
 	}
-	other := 1 - me
+	other := -1
+	if me >= 0 {
+		other = 1 - me
+	}
 	full := g.Players[0] != nil && g.Players[1] != nil
+	if s.clockExpiredLocked(g) {
+		s.notify()
+		fail(w, 409, "se agotó el tiempo")
+		return
+	}
 
 	switch req.Type {
 	case "leave":
@@ -596,6 +754,17 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "jugada inválida")
 			return
 		}
+		turn := len(g.Moves) % 2
+		if !g.TurnStarted.IsZero() {
+			available := g.TimeLimit
+			if g.TimeMode == "total" {
+				available = g.Remaining[turn]
+			}
+			g.Remaining[turn] = available - time.Since(g.TurnStarted)
+			if g.Remaining[turn] < 0 {
+				g.Remaining[turn] = 0
+			}
+		}
 		g.Moves = append(g.Moves, req.Move)
 		if g.DrawOffer == other {
 			g.DrawOffer = -1 // jugar rechaza la oferta de tablas del rival
@@ -603,6 +772,11 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		if req.Result != "" && endReasons[req.Reason] &&
 			(req.Result == "1-0" || req.Result == "0-1" || req.Result == "1/2-1/2") {
 			g.Result, g.Reason = req.Result, req.Reason
+		}
+		if g.Result == "" {
+			s.startClockLocked(g)
+		} else {
+			g.TurnStarted = time.Time{}
 		}
 	case "resign":
 		if g.Result != "" || !full {
@@ -640,6 +814,11 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 			g.DrawOffer = -1
 			g.Rematch = [2]bool{}
 			g.Round++
+			g.TurnStarted = time.Time{}
+			if g.TimeMode != "" && g.TimeMode != "none" {
+				g.Remaining = [2]time.Duration{g.TimeLimit, g.TimeLimit}
+			}
+			s.startClockLocked(g)
 		}
 	case "chat":
 		t := strings.TrimSpace(req.Text)
@@ -650,13 +829,22 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 			fail(w, 400, "mensaje vacío")
 			return
 		}
-		g.Chat = append(g.Chat, ChatMsg{From: g.Players[me].Name, Color: me, Text: t, T: time.Now().Unix()})
+		from, color := spectatorName, -1
+		if me >= 0 {
+			from, color = g.Players[me].Name, me
+		}
+		g.Chat = append(g.Chat, ChatMsg{From: from, Color: color, Text: t, T: time.Now().Unix()})
 		if len(g.Chat) > maxChat {
 			g.Chat = g.Chat[len(g.Chat)-maxChat:]
 		}
 	default:
 		fail(w, 400, "acción desconocida")
 		return
+	}
+	if g.Result != "" && req.Type != "move" {
+		s.stopClockLocked(g)
+	} else if g.Result != "" && g.ClockTimer != nil {
+		g.ClockTimer.Stop()
 	}
 	s.notify()
 	writeJSON(w, 200, map[string]any{"ok": true})
@@ -881,6 +1069,7 @@ func Start(lanPort int) (string, error) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/info", cors(s.handleInfo))
 	mux.HandleFunc("/api/join", cors(s.handleJoin))
+	mux.HandleFunc("/api/watch", cors(s.handleWatch))
 	mux.HandleFunc("/api/state", cors(s.handleState))
 	mux.HandleFunc("/api/events", cors(s.handleEvents))
 	mux.HandleFunc("/api/action", cors(s.handleAction))

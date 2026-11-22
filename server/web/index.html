@@ -48,6 +48,18 @@
             <label><input type="radio" name="color" value="b"> ♚ Negras</label>
             <label><input type="radio" name="color" value="r"> 🎲 Al azar</label>
           </div>
+          <div class="label" style="margin-top:14px">Control de tiempo</div>
+          <div class="row">
+            <select id="timeMode">
+              <option value="none">Sin límite</option>
+              <option value="per-move">Tiempo por turno</option>
+              <option value="total">Tiempo total por jugador</option>
+            </select>
+            <label id="timeLimitLabel" class="hidden">Segundos
+              <input id="timeLimit" type="number" min="5" max="3600" value="30" style="width:100px">
+            </label>
+          </div>
+          <div class="empty" id="timeHelp">Elige un control de tiempo opcional para esta partida.</div>
           <div class="row"><button id="create" style="width:100%">Crear partida</button></div>
           <div class="label" style="margin-top:14px" id="ipsLabel"></div>
           <div id="ips"></div>
