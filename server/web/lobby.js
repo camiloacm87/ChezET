@@ -6,6 +6,7 @@
     get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
   };
+  const gameNames = { chess: 'Ajedrez', checkers: 'Damas', uno: 'UNO', golpeado: 'Golpeado' };
 
   async function api(path, body) {
     const r = await fetch(path, body
@@ -38,7 +39,7 @@
       $('remoteView').classList.remove('hidden');
       $('remoteName').value = saved;
       $('remoteTitle').textContent = info.gameId
-        ? `Partida de ${info.hostName || 'anfitrión'} (${info.status})`
+        ? `${gameNames[info.gameType] || 'Juego'} de ${info.hostName || 'anfitrión'} (${info.status})`
         : 'Este equipo no tiene ninguna partida creada';
       $('remoteJoin').disabled = !info.gameId;
       $('remoteJoin').onclick = () => {
@@ -59,12 +60,16 @@
     if (info.hosting) {
       $('activeGame').classList.remove('hidden');
       $('activeText').textContent = info.status === 'esperando'
-        ? 'Tienes una partida creada esperando oponente.'
-        : 'Tienes una partida en curso.';
+        ? `Tienes una partida de ${gameNames[info.gameType] || 'juego'} esperando jugadores.`
+        : `Tienes una partida de ${gameNames[info.gameType] || 'juego'} en curso.`;
     }
 
     $('create').onclick = create;
+    document.querySelectorAll('.game-tile').forEach(tile => {
+      tile.onclick = () => { $('gameType').value = tile.dataset.game; updateGameOptions(); };
+    });
     $('timeMode').addEventListener('change', updateTimeOptions);
+    updateGameOptions();
     updateTimeOptions();
     $('backToGame').onclick = () => { location.href = '/game'; };
     $('cancelGame').onclick = async () => {
@@ -104,15 +109,20 @@
     const name = getName($('name'), $('createMsg'));
     if (!name) return;
     if (info.hosting && !confirm('Ya tienes una partida. Si creas otra, la actual se perderá. ¿Continuar?')) return;
-    const color = document.querySelector('input[name=color]:checked').value;
+    const gameType = $('gameType').value;
     try {
-      const timeMode = $('timeMode').value;
-      const timeLimitSeconds = timeMode === 'per-move' || timeMode === 'total' ? +$('timeLimit').value : 0;
-      if (timeMode !== 'none' && (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 5 || timeLimitSeconds > 3600)) {
+      const hasColor = gameType === 'chess' || gameType === 'checkers';
+      const hasTime = true;
+      const color = hasColor ? document.querySelector('input[name=color]:checked').value : '';
+      const timeMode = hasTime ? $('timeMode').value : 'none';
+      const timeLimitSeconds = hasTime && (timeMode === 'per-move' || timeMode === 'total') ? +$('timeLimit').value : 0;
+      if (hasTime && timeMode !== 'none' && (!Number.isInteger(timeLimitSeconds) || timeLimitSeconds < 5 || timeLimitSeconds > 3600)) {
         $('createMsg').textContent = 'El tiempo debe estar entre 5 segundos y 60 minutos.';
         return;
       }
-      const j = await api('/api/create', { name, color, timeMode, timeLimitSeconds });
+      const j = await api('/api/create', {
+        name, color, timeMode, timeLimitSeconds, gameType,
+      });
       store.set('chezzred.seat', JSON.stringify({ gid: j.gameId, tok: j.token }));
       location.href = '/game';
     } catch (e) {
@@ -120,10 +130,30 @@
     }
   }
 
+  function updateGameOptions() {
+    const gameType = $('gameType').value;
+    const cardGame = gameType === 'uno' || gameType === 'golpeado';
+    $('colorOptions').classList.toggle('hidden', gameType !== 'chess' && gameType !== 'checkers');
+    $('colorW').textContent = gameType === 'checkers' ? '⚪ Blancas' : '♔ Blancas';
+    $('colorB').textContent = gameType === 'checkers' ? '⚫ Negras' : '♚ Negras';
+    $('totalOption').hidden = $('totalOption').disabled = cardGame;
+    if (cardGame && $('timeMode').value === 'total') $('timeMode').value = 'none';
+    updateTimeOptions();
+    document.querySelectorAll('.game-tile').forEach(tile => {
+      const on = tile.dataset.game === gameType;
+      tile.classList.toggle('selected', on);
+      tile.setAttribute('aria-checked', on);
+    });
+    $('create').textContent = `Crear partida de ${gameNames[gameType] || 'juego'}`;
+  }
+
   function updateTimeOptions() {
     const mode = $('timeMode').value;
     $('timeLimitLabel').classList.toggle('hidden', mode === 'none');
-    $('timeHelp').textContent = mode === 'per-move'
+    const cardGame = ['uno', 'golpeado'].includes($('gameType').value);
+    $('timeHelp').textContent = mode === 'per-move' && cardGame
+      ? 'Si se agota el tiempo del turno, el juego roba y pasa el turno por el jugador (30 segundos sugeridos).'
+      : mode === 'per-move'
       ? 'El jugador pierde al agotarse el tiempo de su turno (30 segundos sugeridos).'
       : mode === 'total'
         ? 'El reloj de cada jugador solo descuenta durante sus turnos (10 minutos sugeridos).'
@@ -141,7 +171,7 @@
       const li = document.createElement('li');
       li.innerHTML = '<div class="who"><span class="n"></span><small></small></div><button></button>';
       li.querySelector('.n').textContent = `Partida de ${p.name}`;
-      li.querySelector('small').textContent = `${p.host}:${p.port} · ${p.status}`;
+      li.querySelector('small').textContent = `${gameNames[p.gameType] || 'Juego'} · ${p.host}:${p.port} · ${p.status}`;
       const b = li.querySelector('button');
       b.textContent = p.status === 'esperando' ? 'Unirse' : 'Ver';
       if (p.status !== 'esperando') b.className = 'secondary';

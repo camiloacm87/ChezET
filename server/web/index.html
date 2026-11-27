@@ -27,9 +27,21 @@
     </div>
 
     <div id="localView" class="hidden">
-      <div class="card" style="margin-bottom:18px">
-        <div class="label">Tu nombre</div>
-        <div class="row" style="margin:0"><input id="name" placeholder="Escribe tu nombre" maxlength="24"></div>
+      <div class="card top-card" style="margin-bottom:18px">
+        <div class="name-box">
+          <div class="label">Tu nombre</div>
+          <input id="name" placeholder="Escribe tu nombre" maxlength="24">
+        </div>
+        <div class="game-box">
+          <div class="label">Juego</div>
+          <input type="hidden" id="gameType" value="chess">
+          <div class="game-picker" id="gamePicker" role="radiogroup" aria-label="Juego">
+            <button type="button" class="game-tile selected" data-game="chess" role="radio" aria-checked="true"><span class="ico">♞</span>Ajedrez</button>
+            <button type="button" class="game-tile" data-game="checkers" role="radio" aria-checked="false"><span class="ico">⛀</span>Damas</button>
+            <button type="button" class="game-tile" data-game="uno" role="radio" aria-checked="false"><span class="ico">🃏</span>UNO</button>
+            <button type="button" class="game-tile" data-game="golpeado" role="radio" aria-checked="false"><span class="ico">♠</span>Golpeado</button>
+          </div>
+        </div>
       </div>
 
       <div class="cards">
@@ -42,24 +54,28 @@
               <button id="cancelGame" class="danger">Cancelar partida</button>
             </div>
           </div>
+          <div id="colorOptions">
           <div class="label">Quiero jugar con</div>
           <div class="colors">
-            <label><input type="radio" name="color" value="w" checked> ♔ Blancas</label>
-            <label><input type="radio" name="color" value="b"> ♚ Negras</label>
+            <label><input type="radio" name="color" value="w" checked> <span id="colorW">♔ Blancas</span></label>
+            <label><input type="radio" name="color" value="b"> <span id="colorB">♚ Negras</span></label>
             <label><input type="radio" name="color" value="r"> 🎲 Al azar</label>
           </div>
+          </div>
+          <div id="timeOptions">
           <div class="label" style="margin-top:14px">Control de tiempo</div>
           <div class="row">
             <select id="timeMode">
               <option value="none">Sin límite</option>
               <option value="per-move">Tiempo por turno</option>
-              <option value="total">Tiempo total por jugador</option>
+              <option value="total" id="totalOption">Tiempo total por jugador</option>
             </select>
             <label id="timeLimitLabel" class="hidden">Segundos
               <input id="timeLimit" type="number" min="5" max="3600" value="30" style="width:100px">
             </label>
           </div>
           <div class="empty" id="timeHelp">Elige un control de tiempo opcional para esta partida.</div>
+          </div>
           <div class="row"><button id="create" style="width:100%">Crear partida</button></div>
           <div class="label" style="margin-top:14px" id="ipsLabel"></div>
           <div id="ips"></div>
@@ -81,8 +97,8 @@
       </div>
 
       <p class="help">
-        <b>¿Cómo se juega?</b> Uno de los dos pulsa <i>Crear partida</i>. El otro abre la app en su equipo y elige la
-        partida en la lista de <i>Partidas encontradas</i> o escribe la dirección que se muestra en el equipo del
+        <b>¿Cómo se juega?</b> Una persona pulsa <i>Crear partida</i>. Las demás abren la app y eligen la
+        partida en la lista de <i>Partidas encontradas</i> o escriben la dirección que se muestra en el equipo del
         anfitrión. La red de tu equipo solo se abre mientras eres anfitrión de una partida; si Windows o macOS
         preguntan por el firewall, pulsa <i>Permitir</i>. Si alguien cierra la app, al otro se le avisa.
       </p>

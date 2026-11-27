@@ -11,6 +11,7 @@
   };
   let es = null;
   let ended = false;
+  let resultOverlayDismissed = false;
   let lastOk = Date.now();
 
   let token = '';
@@ -64,6 +65,10 @@
   // ---------- inicio ----------
   async function init() {
     info = await api('/api/info');
+    if (info.gameType && info.gameType !== 'chess') {
+      await OtherGames.init(info);
+      return;
+    }
     if (!info.isLocal) $('home').removeAttribute('href');
     if (!info.gameId) {
       $('status').innerHTML = 'No hay ninguna partida creada en este equipo.' +
@@ -188,6 +193,7 @@
       const last = game.hist[game.hist.length - 1];
       sound(isOver() ? 'end' : last.capture ? 'capture' : 'move');
     }
+    if (prev && prev.round !== v.round) resultOverlayDismissed = false;
     if (prev && !prev.result && v.result) sound('end');
     render();
   }
@@ -211,8 +217,46 @@
     renderButtons();
     renderMoves();
     renderChat();
+    renderResultOverlay();
     document.title = canMove() ? '● Tu turno — Ajedrez en Red' : 'Ajedrez en Red';
   }
+
+  function renderResultOverlay() {
+    const overlay = $('resultOverlay');
+    const outcome = isOver();
+    if (!outcome || resultOverlayDismissed) {
+      overlay.classList.add('hidden');
+      return;
+    }
+
+    const winner = outcome.result === '1-0' ? 0 : outcome.result === '0-1' ? 1 : -1;
+    const won = winner >= 0 && myIdx() === winner;
+    const lost = winner >= 0 && myIdx() >= 0 && myIdx() !== winner;
+    $('resultTitle').textContent = won ? '¡Ganaste!' : lost ? '¡Usted perdió!' : winner < 0 ? '¡Tablas!' : 'Partida finalizada';
+    $('resultMessage').textContent = won ? '¡Victoria! 🎉🎊' : lost ? 'Loser 😢😞' : outcome.reason || 'La partida ha terminado.';
+    $('resultEmoji').textContent = won ? '🏆' : lost ? '😢' : winner < 0 ? '🤝' : '♟';
+
+    const confetti = $('resultConfetti');
+    confetti.innerHTML = '';
+    if (won) {
+      const colors = ['#ffcc33', '#ff5c7a', '#53d6c5', '#8d79ff', '#7bd66f', '#ff914d'];
+      for (let i = 0; i < 80; i++) {
+        const piece = document.createElement('span');
+        piece.className = 'confetti-piece';
+        piece.style.left = `${Math.random() * 100}%`;
+        piece.style.backgroundColor = colors[i % colors.length];
+        piece.style.animationDelay = `${Math.random() * 3}s`;
+        piece.style.animationDuration = `${3 + Math.random() * 3}s`;
+        confetti.appendChild(piece);
+      }
+    }
+    overlay.classList.remove('hidden');
+  }
+
+  $('resultDismiss').addEventListener('click', () => {
+    resultOverlayDismissed = true;
+    $('resultOverlay').classList.add('hidden');
+  });
 
   function renderBoard() {
     const b = $('board');
@@ -407,6 +451,7 @@
 
   $('chatForm').addEventListener('submit', e => {
     e.preventDefault();
+    if (info && info.gameType && info.gameType !== 'chess') return;
     const t = $('chatInput').value.trim();
     if (!t) return;
     $('chatInput').value = '';

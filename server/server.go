@@ -1,9 +1,9 @@
 // Package server es el núcleo de Ajedrez en Red: un pequeño servidor web local
-// que sirve la interfaz, guarda la partida y la sincroniza entre los dos
+// que sirve la interfaz, guarda la partida y la sincroniza entre los jugadores
 // jugadores. Lo usan la app de escritorio (Windows/Mac) y, en el futuro, la de
 // Android (vía gomobile).
 //
-// Un jugador "crea" la partida (su equipo actúa de anfitrión) y el otro se
+// Un jugador "crea" la partida (su equipo actúa de anfitrión) y los demás se
 // "une" desde la red local, eligiéndola de la lista de partidas descubiertas
 // automáticamente o escribiendo la IP.
 package server
@@ -29,10 +29,11 @@ import (
 var webFS embed.FS
 
 const (
-	defaultPort   = 8765
-	discoveryPort = 8766
-	appTag        = "chezzred/1"
-	maxChat       = 200
+	defaultPort    = 8765
+	discoveryPort  = 8766
+	appTag         = "chezzred/1"
+	maxChat        = 200
+	maxCardPlayers = 8
 )
 
 var moveRe = regexp.MustCompile(`^[a-h][1-8][a-h][1-8][qrbn]?$`)
@@ -59,21 +60,27 @@ type ChatMsg struct {
 }
 
 type Game struct {
-	ID          string
-	Round       int
-	Players     [2]*Player // 0 = blancas, 1 = negras
-	Spectators  map[string]string
-	Moves       []string // jugadas en formato UCI (e2e4, e7e8q)
-	Result      string   // "", "1-0", "0-1", "1/2-1/2"
-	Reason      string
-	DrawOffer   int // -1 ninguna, si no el color que ofrece
-	Rematch     [2]bool
-	Chat        []ChatMsg
-	TimeMode    string
-	TimeLimit   time.Duration
-	Remaining   [2]time.Duration
-	TurnStarted time.Time
-	ClockTimer  *time.Timer
+	ID           string
+	Round        int
+	GameType     string
+	PlayerLimit  int
+	Started      bool       // UNO/Golpeado: el anfitrión ya inició la partida
+	Players      [2]*Player // 0 = blancas, 1 = negras
+	ExtraPlayers []*Player
+	Spectators   map[string]string
+	Moves        []string // jugadas en formato UCI (e2e4, e7e8q)
+	Result       string   // "", "1-0", "0-1", "1/2-1/2"
+	Reason       string
+	Checkers     *checkersState
+	Cards        *cardGameState
+	DrawOffer    int // -1 ninguna, si no el color que ofrece
+	Rematch      [2]bool
+	Chat         []ChatMsg
+	TimeMode     string
+	TimeLimit    time.Duration
+	Remaining    [2]time.Duration
+	TurnStarted  time.Time
+	ClockTimer   *time.Timer
 }
 
 type sub struct {
@@ -82,11 +89,12 @@ type sub struct {
 }
 
 type peer struct {
-	Name   string `json:"name"`
-	Host   string `json:"host"`
-	Port   int    `json:"port"`
-	Status string `json:"status"`
-	seen   time.Time
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+	Status   string `json:"status"`
+	GameType string `json:"gameType"`
+	seen     time.Time
 }
 
 // remoteSeat es la partida de otro equipo a la que se unió este jugador; al
@@ -247,7 +255,7 @@ func (s *Server) seatOf(token string) int {
 	if s.game == nil || token == "" {
 		return -1
 	}
-	for i, p := range s.game.Players {
+	for i, p := range playerSeats(s.game) {
 		if p != nil && p.Token == token {
 			return i
 		}
@@ -255,16 +263,45 @@ func (s *Server) seatOf(token string) int {
 	return -1
 }
 
+func playerSeats(g *Game) []*Player {
+	if g.ExtraPlayers != nil {
+		return g.ExtraPlayers
+	}
+	return g.Players[:]
+}
+
+func isCardGame(g *Game) bool { return g.ExtraPlayers != nil }
+
+func playersReady(g *Game) bool {
+	if isCardGame(g) {
+		return g.Started
+	}
+	seats := playerSeats(g)
+	if len(seats) == 0 {
+		return false
+	}
+	for _, p := range seats {
+		if p == nil {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) startClockLocked(g *Game) {
 	if g.TimeMode == "" || g.TimeMode == "none" || g.Result != "" ||
-		g.Players[0] == nil || g.Players[1] == nil {
+		!playersReady(g) {
+		return
+	}
+	if isCardGame(g) {
+		s.startCardClockLocked(g)
 		return
 	}
 	if g.ClockTimer != nil {
 		g.ClockTimer.Stop()
 	}
 	g.TurnStarted = time.Now()
-	turn := len(g.Moves) % 2
+	turn := clockTurn(g)
 	duration := g.TimeLimit
 	if g.TimeMode == "total" {
 		duration = g.Remaining[turn]
@@ -283,13 +320,54 @@ func (s *Server) startClockLocked(g *Game) {
 	})
 }
 
+// startCardClockLocked arranca el tiempo del turno actual en UNO/Golpeado. Si se
+// agota, el servidor juega por el jugador. Con s.mu tomado.
+func (s *Server) startCardClockLocked(g *Game) {
+	if g.ClockTimer != nil {
+		g.ClockTimer.Stop()
+	}
+	g.TurnStarted = time.Now()
+	started := g.TurnStarted
+	g.ClockTimer = time.AfterFunc(g.TimeLimit, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.game != g || g.Result != "" || !g.TurnStarted.Equal(started) {
+			return
+		}
+		s.cardTimeoutLocked(g)
+		s.notify()
+	})
+}
+
+// cardTimeoutLocked juega automáticamente el turno agotado y reinicia el reloj.
+func (s *Server) cardTimeoutLocked(g *Game) {
+	autoCardTurn(g)
+	if g.Result == "" {
+		s.startCardClockLocked(g)
+	} else {
+		g.TurnStarted = time.Time{}
+	}
+}
+
+// clockTurn devuelve quién tiene el turno en los juegos de dos (0 o 1).
+func clockTurn(g *Game) int {
+	if g.Checkers != nil {
+		return g.Checkers.Turn
+	}
+	return len(g.Moves) % 2
+}
+
 func (s *Server) expireClockLocked(g *Game) {
 	if g.ClockTimer != nil {
 		g.ClockTimer.Stop()
 	}
-	turn := len(g.Moves) % 2
+	turn := clockTurn(g)
 	g.Remaining[turn] = 0
-	g.Result = map[int]string{0: "0-1", 1: "1-0"}[turn]
+	if g.GameType == "checkers" {
+		g.Result = fmt.Sprintf("winner:%d", 1-turn)
+	} else {
+		g.Result = map[int]string{0: "0-1", 1: "1-0"}[turn]
+	}
 	g.Reason = "Tiempo agotado"
 }
 
@@ -297,10 +375,14 @@ func (s *Server) stopClockLocked(g *Game) {
 	if g.ClockTimer != nil {
 		g.ClockTimer.Stop()
 	}
+	if isCardGame(g) {
+		g.TurnStarted = time.Time{}
+		return
+	}
 	if g.TurnStarted.IsZero() {
 		return
 	}
-	turn := len(g.Moves) % 2
+	turn := clockTurn(g)
 	available := g.TimeLimit
 	if g.TimeMode == "total" {
 		available = g.Remaining[turn]
@@ -317,7 +399,14 @@ func (s *Server) clockExpiredLocked(g *Game) bool {
 	if g.TimeMode == "" || g.TimeMode == "none" || g.TurnStarted.IsZero() || g.Result != "" {
 		return false
 	}
-	turn := len(g.Moves) % 2
+	if isCardGame(g) {
+		if time.Since(g.TurnStarted) < g.TimeLimit {
+			return false
+		}
+		s.cardTimeoutLocked(g)
+		return true
+	}
+	turn := clockTurn(g)
 	available := g.TimeLimit
 	if g.TimeMode == "total" {
 		available = g.Remaining[turn]
@@ -342,10 +431,11 @@ func (s *Server) viewJSON(token string) []byte {
 		b, _ := json.Marshal(map[string]any{"gameId": "", "ended": s.endReason})
 		return b
 	}
-	var ps [2]playerView
-	for i, p := range g.Players {
+	seats := playerSeats(g)
+	players := make([]playerView, len(seats))
+	for i, p := range seats {
 		if p != nil {
-			ps[i] = playerView{p.Name, true, p.Online > 0}
+			players[i] = playerView{p.Name, true, p.Online > 0}
 		}
 	}
 	moves := g.Moves
@@ -356,11 +446,14 @@ func (s *Server) viewJSON(token string) []byte {
 	if chat == nil {
 		chat = []ChatMsg{}
 	}
-	b, _ := json.Marshal(map[string]any{
+	state := map[string]any{
 		"gameId":      g.ID,
 		"round":       g.Round,
+		"gameType":    g.GameType,
 		"you":         s.seatOf(token),
-		"players":     ps,
+		"players":     players,
+		"started":     playersReady(g),
+		"maxPlayers":  g.PlayerLimit,
 		"moves":       moves,
 		"result":      g.Result,
 		"reason":      g.Reason,
@@ -370,14 +463,28 @@ func (s *Server) viewJSON(token string) []byte {
 		"timeMode":    g.TimeMode,
 		"timeLimitMs": g.TimeLimit.Milliseconds(),
 		"clocks":      s.clockView(g),
-	})
+	}
+	if g.Checkers != nil {
+		state["checkers"] = checkersView(g.Checkers)
+	}
+	if g.Cards != nil && playersReady(g) {
+		state["cards"] = cardGameView(g.Cards, s.seatOf(token))
+		if g.TimeMode == "per-move" && g.Result == "" && !g.TurnStarted.IsZero() {
+			left := g.TimeLimit - time.Since(g.TurnStarted)
+			if left < 0 {
+				left = 0
+			}
+			state["turnLeftMs"] = left.Milliseconds()
+		}
+	}
+	b, _ := json.Marshal(state)
 	return b
 }
 
 func (s *Server) clockView(g *Game) [2]int64 {
 	clocks := [2]int64{g.Remaining[0].Milliseconds(), g.Remaining[1].Milliseconds()}
 	if g.Result == "" && !g.TurnStarted.IsZero() && g.TimeMode != "" && g.TimeMode != "none" {
-		turn := len(g.Moves) % 2
+		turn := clockTurn(g)
 		left := clocks[turn] - time.Since(g.TurnStarted).Milliseconds()
 		if left < 0 {
 			left = 0
@@ -392,7 +499,7 @@ func (s *Server) hostName() string {
 		return ""
 	}
 	if i := s.seatOf(s.hostToken); i >= 0 {
-		return s.game.Players[i].Name
+		return playerSeats(s.game)[i].Name
 	}
 	return ""
 }
@@ -401,7 +508,7 @@ func (s *Server) status() string {
 	if s.game == nil {
 		return ""
 	}
-	if s.game.Players[0] == nil || s.game.Players[1] == nil {
+	if !playersReady(s.game) {
 		return "esperando"
 	}
 	return "en juego"
@@ -415,11 +522,19 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	free := 0
 	gid := ""
+	gameType := ""
 	if s.game != nil {
 		gid = s.game.ID
-		for _, p := range s.game.Players {
-			if p == nil {
-				free++
+		gameType = s.game.GameType
+		if isCardGame(s.game) {
+			if !s.game.Started {
+				free = s.game.PlayerLimit - len(s.game.ExtraPlayers)
+			}
+		} else {
+			for _, p := range playerSeats(s.game) {
+				if p == nil {
+					free++
+				}
 			}
 		}
 	}
@@ -433,6 +548,7 @@ func (s *Server) handleInfo(w http.ResponseWriter, r *http.Request) {
 		"seatsFree": free,
 		"hostName":  s.hostName(),
 		"status":    s.status(),
+		"gameType":  gameType,
 	})
 }
 
@@ -448,12 +564,25 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name             string `json:"name"`
 		Color            string `json:"color"`
+		GameType         string `json:"gameType"`
 		TimeMode         string `json:"timeMode"`
 		TimeLimitSeconds int    `json:"timeLimitSeconds"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		fail(w, 400, "petición inválida")
 		return
+	}
+	if req.GameType == "" {
+		req.GameType = "chess"
+	}
+	if req.GameType != "chess" && req.GameType != "checkers" &&
+		req.GameType != "uno" && req.GameType != "golpeado" {
+		fail(w, 400, "juego desconocido")
+		return
+	}
+	playerLimit := 2
+	if req.GameType == "uno" || req.GameType == "golpeado" {
+		playerLimit = maxCardPlayers
 	}
 	if req.TimeMode == "" {
 		req.TimeMode = "none"
@@ -462,26 +591,43 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "configuración de tiempo inválida")
 		return
 	}
+	if (req.GameType == "uno" || req.GameType == "golpeado") && req.TimeMode == "total" {
+		fail(w, 400, "este juego solo admite tiempo por turno")
+		return
+	}
 	if req.TimeMode != "none" && (req.TimeLimitSeconds < 5 || req.TimeLimitSeconds > 3600) {
 		fail(w, 400, "el tiempo debe estar entre 5 segundos y 60 minutos")
 		return
 	}
 	seat := 0
-	switch req.Color {
-	case "b":
-		seat = 1
-	case "r":
-		b := make([]byte, 1)
-		_, _ = rand.Read(b)
-		seat = int(b[0] & 1)
+	if req.GameType == "chess" || req.GameType == "checkers" {
+		switch req.Color {
+		case "b":
+			seat = 1
+		case "r":
+			b := make([]byte, 1)
+			_, _ = rand.Read(b)
+			seat = int(b[0] & 1)
+		}
 	}
 	tok := newToken()
 	limit := time.Duration(req.TimeLimitSeconds) * time.Second
-	g := &Game{ID: newToken()[:8], DrawOffer: -1, TimeMode: req.TimeMode, TimeLimit: limit}
+	g := &Game{ID: newToken()[:8], GameType: req.GameType, PlayerLimit: playerLimit,
+		DrawOffer: -1, TimeMode: req.TimeMode, TimeLimit: limit}
+	if req.GameType == "uno" || req.GameType == "golpeado" {
+		g.ExtraPlayers = make([]*Player, 0, playerLimit)
+	}
 	if req.TimeMode != "none" {
 		g.Remaining = [2]time.Duration{limit, limit}
 	}
-	g.Players[seat] = &Player{Name: cleanName(req.Name), Token: tok}
+	if isCardGame(g) {
+		g.ExtraPlayers = append(g.ExtraPlayers, &Player{Name: cleanName(req.Name), Token: tok})
+	} else {
+		playerSeats(g)[seat] = &Player{Name: cleanName(req.Name), Token: tok}
+	}
+	if req.GameType == "checkers" {
+		g.Checkers = newCheckersState()
+	}
 	s.mu.Lock()
 	if err := s.openLAN(); err != nil {
 		s.mu.Unlock()
@@ -493,7 +639,7 @@ func (s *Server) handleCreate(w http.ResponseWriter, r *http.Request) {
 	s.endReason = ""
 	s.notify()
 	s.mu.Unlock()
-	log.Printf("Partida creada por %q (juega con %s)", cleanName(req.Name), map[int]string{0: "blancas", 1: "negras"}[seat])
+	log.Printf("Partida de %s creada por %q", req.GameType, cleanName(req.Name))
 	writeJSON(w, 200, map[string]any{"gameId": g.ID, "token": tok})
 }
 
@@ -548,11 +694,28 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no hay partida creada")
 		return
 	}
-	for i, p := range s.game.Players {
+	if isCardGame(s.game) {
+		if s.game.Started {
+			fail(w, 409, "la partida ya comenzó")
+			return
+		}
+		if len(s.game.ExtraPlayers) >= s.game.PlayerLimit {
+			fail(w, 409, "la partida está completa")
+			return
+		}
+		tok := newToken()
+		s.game.ExtraPlayers = append(s.game.ExtraPlayers, &Player{Name: cleanName(req.Name), Token: tok})
+		s.notify()
+		log.Printf("%q se unió a la partida desde %s", cleanName(req.Name), r.RemoteAddr)
+		writeJSON(w, 200, map[string]any{"gameId": s.game.ID, "token": tok})
+		return
+	}
+	seats := playerSeats(s.game)
+	for i, p := range seats {
 		if p == nil {
 			tok := newToken()
-			s.game.Players[i] = &Player{Name: cleanName(req.Name), Token: tok}
-			if s.game.Players[0] != nil && s.game.Players[1] != nil {
+			seats[i] = &Player{Name: cleanName(req.Name), Token: tok}
+			if playersReady(s.game) {
 				s.startClockLocked(s.game)
 			}
 			s.notify()
@@ -561,7 +724,7 @@ func (s *Server) handleJoin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	fail(w, 409, "la partida ya tiene dos jugadores")
+	fail(w, 409, "la partida está completa")
 }
 
 func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
@@ -582,7 +745,7 @@ func (s *Server) handleWatch(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "no hay partida creada")
 		return
 	}
-	if s.game.Players[0] == nil || s.game.Players[1] == nil {
+	if !playersReady(s.game) {
 		fail(w, 409, "la partida todavía no está llena")
 		return
 	}
@@ -619,7 +782,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	s.subs[sb] = struct{}{}
 	var me *Player
 	if i := s.seatOf(token); i >= 0 {
-		me = s.game.Players[i]
+		me = playerSeats(s.game)[i]
 		me.Online++
 	}
 	s.notify()
@@ -663,6 +826,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// removeWaitingPlayer quita a un jugador de la sala de espera de UNO/Golpeado.
+// Con s.mu tomado.
+func (s *Server) removeWaitingPlayer(token string) {
+	g := s.game
+	for i, p := range g.ExtraPlayers {
+		if p != nil && p.Token == token {
+			g.ExtraPlayers = append(g.ExtraPlayers[:i], g.ExtraPlayers[i+1:]...)
+			return
+		}
+	}
+}
+
 // guestGrace es cuánto se espera a que el invitado vuelva a conectarse (p. ej.
 // al recargar la página) antes de dar la partida por abandonada.
 var guestGrace = 10 * time.Second
@@ -677,7 +852,16 @@ func (s *Server) watchGuest(p *Player) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if p.Online == 0 && s.seatOf(p.Token) >= 0 {
-			s.endGame("Tu rival cerró el juego o perdió la conexión")
+			if s.game != nil && isCardGame(s.game) && !s.game.Started {
+				s.removeWaitingPlayer(p.Token) // en la sala de espera solo se quita su lugar
+				s.notify()
+				return
+			}
+			reason := "Tu rival cerró el juego o perdió la conexión"
+			if s.game != nil && s.game.ExtraPlayers != nil {
+				reason = "Un jugador cerró el juego o perdió la conexión"
+			}
+			s.endGame(reason)
 		}
 	})
 }
@@ -688,13 +872,21 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Token  string `json:"token"`
-		Type   string `json:"type"`
-		Move   string `json:"move"`
-		Ply    int    `json:"ply"`
-		Result string `json:"result"`
-		Reason string `json:"reason"`
-		Text   string `json:"text"`
+		Token     string `json:"token"`
+		Type      string `json:"type"`
+		Move      string `json:"move"`
+		Ply       int    `json:"ply"`
+		Result    string `json:"result"`
+		Reason    string `json:"reason"`
+		Text      string `json:"text"`
+		Action    string `json:"action"`
+		From      int    `json:"from"`
+		To        int    `json:"to"`
+		Card      int    `json:"card"`
+		Color     string `json:"color"`
+		Cards     []int  `json:"cards"`
+		MeldIndex int    `json:"meldIndex"`
+		Uno       bool   `json:"uno"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		fail(w, 400, "petición inválida")
@@ -715,9 +907,9 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	}
 	other := -1
 	if me >= 0 {
-		other = 1 - me
+		other = (me + 1) % len(playerSeats(g))
 	}
-	full := g.Players[0] != nil && g.Players[1] != nil
+	full := playersReady(g)
 	if s.clockExpiredLocked(g) {
 		s.notify()
 		fail(w, 409, "se agotó el tiempo")
@@ -728,6 +920,11 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 	case "leave":
 		if req.Token == s.hostToken {
 			s.endGame("El anfitrión cerró la partida")
+		} else if isCardGame(g) && !g.Started {
+			s.removeWaitingPlayer(req.Token)
+			s.notify()
+		} else if g.ExtraPlayers != nil {
+			s.endGame("Un jugador salió de la partida")
 		} else {
 			s.endGame("Tu rival salió de la partida")
 		}
@@ -740,6 +937,33 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		if g.Result != "" {
 			fail(w, 409, "la partida ya terminó")
+			return
+		}
+		if g.GameType == "checkers" {
+			turnBefore := g.Checkers.Turn
+			if err := makeCheckersMove(g, me, req.From, req.To); err != nil {
+				fail(w, 409, err.Error())
+				return
+			}
+			if g.Checkers.Turn != turnBefore || g.Result != "" { // una captura múltiple no cambia el reloj
+				if !g.TurnStarted.IsZero() {
+					available := g.TimeLimit
+					if g.TimeMode == "total" {
+						available = g.Remaining[turnBefore]
+					}
+					g.Remaining[turnBefore] = max(0, available-time.Since(g.TurnStarted))
+				}
+				if g.Result == "" {
+					s.startClockLocked(g)
+				} else {
+					if g.ClockTimer != nil {
+						g.ClockTimer.Stop()
+					}
+					g.TurnStarted = time.Time{}
+				}
+			}
+			s.notify()
+			writeJSON(w, 200, map[string]any{"ok": true})
 			return
 		}
 		if len(g.Moves)%2 != me {
@@ -783,8 +1007,45 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "no se puede abandonar ahora")
 			return
 		}
-		g.Result = map[int]string{0: "0-1", 1: "1-0"}[me]
+		if g.GameType == "chess" {
+			g.Result = map[int]string{0: "0-1", 1: "1-0"}[me]
+		} else {
+			g.Result = fmt.Sprintf("winner:%d", other)
+		}
 		g.Reason = "Abandono"
+	case "start":
+		if !isCardGame(g) || req.Token != s.hostToken {
+			fail(w, 403, "solo el anfitrión puede iniciar la partida")
+			return
+		}
+		if g.Started {
+			fail(w, 409, "la partida ya comenzó")
+			return
+		}
+		if len(g.ExtraPlayers) < 2 {
+			fail(w, 409, "se necesitan al menos 2 jugadores")
+			return
+		}
+		if g.GameType == "uno" {
+			g.Cards = newUnoState(len(g.ExtraPlayers))
+		} else {
+			g.Cards = newGolpeadoState(len(g.ExtraPlayers))
+		}
+		g.Started = true
+		s.startClockLocked(g)
+	case "game-action":
+		if !full || g.Result != "" {
+			fail(w, 409, "la partida no está disponible para jugar")
+			return
+		}
+		turnsBefore := g.Cards.TurnCount
+		if err := makeCardAction(g, me, req.Action, req.Card, req.Color, req.Cards, req.MeldIndex, req.Uno); err != nil {
+			fail(w, 409, err.Error())
+			return
+		}
+		if g.Result == "" && g.Cards.TurnCount != turnsBefore {
+			s.startClockLocked(g) // turno nuevo: el reloj vuelve a empezar
+		}
 	case "draw-offer":
 		if g.Result != "" || !full {
 			fail(w, 409, "no se puede ofrecer tablas ahora")
@@ -806,11 +1067,18 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 			fail(w, 409, "la partida sigue en juego")
 			return
 		}
+		if g.ExtraPlayers != nil {
+			fail(w, 409, "crea una nueva partida para jugar otra ronda")
+			return
+		}
 		g.Rematch[me] = true
 		if g.Rematch[0] && g.Rematch[1] {
 			g.Players[0], g.Players[1] = g.Players[1], g.Players[0]
 			g.Moves = nil
 			g.Result, g.Reason = "", ""
+			if g.GameType == "checkers" {
+				g.Checkers = newCheckersState()
+			}
 			g.DrawOffer = -1
 			g.Rematch = [2]bool{}
 			g.Round++
@@ -831,7 +1099,7 @@ func (s *Server) handleAction(w http.ResponseWriter, r *http.Request) {
 		}
 		from, color := spectatorName, -1
 		if me >= 0 {
-			from, color = g.Players[me].Name, me
+			from, color = playerSeats(g)[me].Name, me
 		}
 		g.Chat = append(g.Chat, ChatMsg{From: from, Color: color, Text: t, T: time.Now().Unix()})
 		if len(g.Chat) > maxChat {
@@ -873,12 +1141,13 @@ func (s *Server) handleDiscover(w http.ResponseWriter, r *http.Request) {
 // ---------- Descubrimiento por broadcast UDP ----------
 
 type beacon struct {
-	Tag    string `json:"tag"`
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	Port   int    `json:"port"`
-	Status string `json:"status"`
-	Addr   string `json:"addr"` // IP principal del emisor
+	Tag      string `json:"tag"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Port     int    `json:"port"`
+	Status   string `json:"status"`
+	Addr     string `json:"addr"` // IP principal del emisor
+	GameType string `json:"gameType"`
 }
 
 // listenForGames abre (si no lo está) la escucha de anuncios de partidas. Se
@@ -914,7 +1183,10 @@ func (s *Server) discovery() {
 		var b []byte
 		if s.game != nil && s.lanPort != 0 {
 			primary, _ := localIPs()
-			b, _ = json.Marshal(beacon{appTag, s.instanceID, s.hostName(), s.lanPort, s.status(), primary})
+			b, _ = json.Marshal(beacon{
+				Tag: appTag, ID: s.instanceID, Name: s.hostName(), Port: s.lanPort,
+				Status: s.status(), Addr: primary, GameType: s.game.GameType,
+			})
 		}
 		s.mu.Unlock()
 		if b == nil {
@@ -950,7 +1222,10 @@ func (s *Server) listenBeacons(conn *net.UDPConn) {
 		if old, ok := s.peers[key]; ok && host != b.Addr && time.Since(old.seen) < 7*time.Second {
 			host = old.Host
 		}
-		s.peers[key] = &peer{Name: cleanName(b.Name), Host: host, Port: b.Port, Status: b.Status, seen: time.Now()}
+		s.peers[key] = &peer{
+			Name: cleanName(b.Name), Host: host, Port: b.Port, Status: b.Status,
+			GameType: b.GameType, seen: time.Now(),
+		}
 		s.mu.Unlock()
 	}
 }

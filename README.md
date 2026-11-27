@@ -1,6 +1,6 @@
-# ♞ Ajedrez en Red
+# ♞ Juegos en Red
 
-Ajedrez para dos jugadores por la red local del trabajo. Sin instalación, sin internet y sin servidores externos.
+Ajedrez, Damas, UNO y Golpeado para jugar por la red local. Sin instalación, sin internet y sin servidores externos.
 
 ## Descargar
 
@@ -29,17 +29,23 @@ Necesita Microsoft Edge WebView2, que ya viene en Windows 10/11 (si faltara, el 
 
 ## Cómo jugar
 
-1. Los dos jugadores abren la app.
-2. Uno pulsa **Crear partida** (elige blancas, negras o al azar).
-3. El otro pulsa **Unirse** sobre la partida que aparece en *Partidas encontradas en la red*,
+1. Los jugadores abren la app.
+2. Uno elige **Ajedrez**, **Damas**, **UNO** o **Golpeado** y pulsa **Crear partida**. En Ajedrez puede elegir color; en UNO y Golpeado se crea una sala (hasta 8 jugadores) y el anfitrión pulsa **Iniciar partida** cuando haya 2 o más.
+3. Los demás pulsan **Unirse** sobre la partida que aparece en *Partidas encontradas en la red*,
    o escribe la dirección que se muestra en el equipo del anfitrión (p. ej. `192.168.1.25:8765`).
-4. Al crear la partida, se puede elegir sin límite, un tiempo máximo por turno o un reloj total por jugador.
-   Mover: clic en la pieza y clic en el destino, o arrastrar y soltar.
+4. En Ajedrez se puede elegir sin límite, un tiempo máximo por turno o un reloj total por jugador.
+   En Ajedrez y Damas se mueve haciendo clic en una pieza y luego en el destino.
 
-Incluye todas las reglas (enroque, captura al paso, coronación, jaque mate, rey ahogado, tablas por
+**Juegos:** Ajedrez incluye todas las reglas (enroque, captura al paso, coronación, jaque mate, rey ahogado, tablas por
 material insuficiente, 50 movimientos y triple repetición), ofrecer tablas, rendirse, revancha
 (con cambio de colores), chat y reconexión. La lista muestra las casillas de salida y llegada de cada jugada.
 Quienes entren a una partida ya completa como espectadores también pueden participar en el chat.
+Damas es para dos y obliga a capturar cuando hay una captura disponible. UNO usa cartas clásicas, con comodines,
+reversa, saltos y cartas +2/+4; no permite acumular penalizaciones. Golpeado permite de 2 a 8 jugadores (se usan
+dos barajas cuando juegan 8), reparte 7 cartas (8 al primer jugador, que descarta para iniciar), y permite formar
+tercias/escaleras y enchufar cartas.
+Tras una vuelta completa se puede golpear al inicio del turno; si quien golpea no tiene estrictamente menos puntos
+que todos, se duplica su puntaje. Cada golpeo cierra la partida y muestra los puntajes de esa mano.
 
 **Red y desconexión:**
 - Al abrir la app, el equipo **no es accesible desde la red**: la interfaz solo escucha dentro del propio equipo.
@@ -66,6 +72,7 @@ Requiere [Go](https://go.dev/dl/) 1.22+.
 
 - `main.go`, `window_*.go` — app de escritorio: ventana propia (WebView2 en Windows, WebKit en Mac, WebKitGTK en Linux).
 - `server/server.go` — núcleo: servidor local, sincronización en tiempo real (SSE), descubrimiento UDP.
+- `server/games.go` — reglas de Damas, UNO y Golpeado, validadas por el servidor.
 - `server/web/` — interfaz y motor de reglas (`chess.js`, validado con pruebas perft).
 - `packaging/` — icono e `Info.plist` de Mac.
 - `tools/mkrsrc` — incrusta icono y manifiesto en el `.exe`.
