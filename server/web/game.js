@@ -4,7 +4,11 @@
   const glyph = p => GLYPH[p.toLowerCase()] + '︎';
   const COLOR_NAME = ['Blancas', 'Negras'];
   // Sin datos guardados entre usos: todo vive solo mientras la ventana está abierta.
-  try { localStorage.clear(); } catch {}
+  // Preferencias que sí se recuerdan entre usos: nombre y última dirección.
+  const pref = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
   const store = {
     get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
@@ -87,9 +91,9 @@
       token = saved.tok;
     } else {
       const params = new URLSearchParams(location.search);
-      let name = params.get('name') || store.get('chezzred.name') || '';
+      let name = params.get('name') || pref.get('chezzred.name') || '';
       if (!name) name = (prompt('Tu nombre:') || '').trim() || 'Invitado';
-      store.set('chezzred.name', name);
+      pref.set('chezzred.name', name);
       if (info.seatsFree > 0) {
         try {
           const j = await api('/api/join', { name });

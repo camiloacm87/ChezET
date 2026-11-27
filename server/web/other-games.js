@@ -16,6 +16,11 @@
     return data;
   }
 
+  // Preferencias que sí se recuerdan entre usos: nombre y última dirección.
+  const pref = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
+  };
   const store = {
     get(key) { try { return sessionStorage.getItem(key); } catch { return null; } },
     set(key, value) { try { sessionStorage.setItem(key, value); } catch {} },
@@ -38,9 +43,9 @@
     if (saved && saved.gid === info.gameId) token = saved.tok;
     else {
       const params = new URLSearchParams(location.search);
-      let name = params.get('name') || store.get('chezzred.name') || '';
+      let name = params.get('name') || pref.get('chezzred.name') || '';
       if (!name) name = (prompt('Tu nombre:') || '').trim() || 'Invitado';
-      store.set('chezzred.name', name);
+      pref.set('chezzred.name', name);
       if (info.seatsFree > 0) {
         try {
           const joined = await api('/api/join', { name });
@@ -316,6 +321,10 @@
     const waitingRoom = view.gameType !== 'checkers' && !view.started;
     const current = waitingRoom ? null : view.players[cards ? cards.turn : view.checkers.turn];
     const over = !!view.result;
+    const waitingForPlayers = !over && (
+      waitingRoom ||
+      (view.gameType === 'checkers' && !allPlayersJoined())
+    );
     let message;
     if (over) message = view.reason || 'La partida terminó.';
     else if (waitingRoom) {
@@ -336,6 +345,7 @@
     const status = $('status');
     status.textContent = '';
     status.appendChild(document.createTextNode(message));
+    if (waitingForPlayers) appendWaitingAddresses(status);
     if (!over && !waitingRoom) {
       const help = document.createElement('small');
       help.textContent = view.gameType === 'checkers'
@@ -345,6 +355,19 @@
           : 'Roba y descarta; baja tercias o escaleras. Tras una vuelta puedes golpear con la puntuación más baja.';
       status.appendChild(help);
     }
+  }
+
+  function appendWaitingAddresses(status) {
+    if (!info.isLocal || !info.port) return;
+    const help = document.createElement('small');
+    help.textContent = 'Pídele a tu compañero que abra la app y elija tu partida en la lista, o que escriba esta dirección:';
+    status.appendChild(help);
+    (info.ips.length ? info.ips : ['?']).forEach(ip => {
+      const address = document.createElement('div');
+      address.className = 'addr';
+      address.textContent = `${ip}:${info.port}`;
+      status.appendChild(address);
+    });
   }
 
   function renderTurnTimer() {

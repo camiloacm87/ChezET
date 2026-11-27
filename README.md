@@ -52,7 +52,7 @@ que todos, se duplica su puntaje. Cada golpeo cierra la partida y muestra los pu
   El puerto de red se abre únicamente al **crear** una partida y se cierra al terminarla, al salir o al cerrar la app.
 - Si un jugador cierra la app o pulsa *Salir de la partida*, al otro le aparece el aviso, la partida termina
   y vuelve a la pantalla de inicio. Si se corta la red, el aviso llega a los 10 segundos.
-- La app **empieza siempre desde cero**: no guarda partidas, nombres ni direcciones entre usos.
+- La app **no guarda partidas**. Solo recuerda en este equipo tu nombre y la última dirección (IP:puerto) a la que te uniste con éxito, para rellenarlos al abrirla.
 
 **Firewall:** la primera vez que crees una partida, Windows/macOS preguntarán si permitir conexiones de red: pulsar *Permitir*.
 Puertos: TCP 8765 (partida) y UDP 8766 (descubrimiento). Si la red bloquea el descubrimiento,

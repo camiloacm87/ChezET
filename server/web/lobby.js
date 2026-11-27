@@ -1,10 +1,14 @@
 (() => {
   const $ = id => document.getElementById(id);
   // Sin datos guardados entre usos: todo vive solo mientras la ventana está abierta.
-  try { localStorage.clear(); } catch {}
   const store = {
     get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { sessionStorage.setItem(k, v); } catch {} },
+  };
+  // Preferencias que sí se recuerdan entre usos: nombre y última dirección.
+  const pref = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch {} },
   };
   const gameNames = { chess: 'Ajedrez', checkers: 'Damas', uno: 'UNO', golpeado: 'Golpeado' };
 
@@ -26,13 +30,13 @@
       input.focus();
       return null;
     }
-    store.set('chezzred.name', n);
+    pref.set('chezzred.name', n);
     return n;
   }
 
   async function init() {
     info = await api('/api/info');
-    const saved = store.get('chezzred.name') || '';
+    const saved = pref.get('chezzred.name') || '';
 
     if (!info.isLocal) {
       // Página abierta desde otro equipo directamente en el navegador
@@ -54,7 +58,7 @@
 
     $('localView').classList.remove('hidden');
     $('name').value = saved;
-    $('name').addEventListener('input', () => store.set('chezzred.name', $('name').value.trim()));
+    $('name').addEventListener('input', () => pref.set('chezzred.name', $('name').value.trim()));
     showAddresses();
 
     if (info.hosting) {
@@ -79,7 +83,7 @@
     };
     $('manualJoin').onclick = manualJoin;
     $('manual').addEventListener('keydown', e => { if (e.key === 'Enter') manualJoin(); });
-    $('manual').value = store.get('chezzred.lastHost') || '';
+    $('manual').value = pref.get('chezzred.lastHost') || '';
 
     refreshPeers();
     setInterval(refreshPeers, 2000);
@@ -186,7 +190,6 @@
     let host = v, port = 8765;
     const m = v.match(/^(.+):(\d+)$/);
     if (m) { host = m[1]; port = +m[2]; }
-    store.set('chezzred.lastHost', v);
     joinAt(host, port);
   }
 
@@ -202,6 +205,7 @@
       clearTimeout(t);
       const j = await r.json();
       if (!j.gameId) throw new Error('nogame');
+      pref.set('chezzred.lastHost', `${host}:${port}`); // conexión comprobada: se recuerda
     } catch (e) {
       $('joinMsg').textContent = e.message === 'nogame'
         ? 'Ese equipo no tiene ninguna partida creada todavía.'
